@@ -19,7 +19,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "string.h"
 #include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -126,7 +125,7 @@ xTaskHandle xTaskHandle_Scanner = NULL,
 			xTaskHandle_LCD,
 			xTaskHandle_USART_Service;
 
-__attribute__((section(".ITCMRAM_code"))) void vTask_Scanner (void *pvParameters);
+/*__attribute__((section(".ITCMRAM_code")))*/ void vTask_Scanner (void *pvParameters);
 void vTask_Kyeboard (void *pvParameters);
 void vTask_ContainerDetect (void *pvParameters);
 void vTask_LCD (void *pvParameters);
@@ -138,10 +137,6 @@ void TimersTuning(void);
 void SystemInterruptsTuning(void);
 void DMATuning(void);
 
-void Nybble(void);
-void WriteLCD(char i);
-void CommandLCD(uint8_t i);
-void TuningLCD (void);
 void Clear_Counter (void);
 
 void ShowTextOnLCD (const char *text);
@@ -205,11 +200,11 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
- // MX_USART3_UART_Init();
- // MX_USB_OTG_HS_USB_Init();
+  //MX_USART3_UART_Init();
+  //MX_USB_OTG_HS_USB_Init();
   MX_COMP1_Init();
   MX_COMP2_Init();
- // MX_USART1_UART_Init();
+  //MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
   RCC->AHB2ENR |= RCC_AHB2ENR_AHBSRAM1EN | RCC_AHB2ENR_AHBSRAM2EN;
@@ -222,10 +217,10 @@ int main(void)
   __HAL_RCC_DMA1_CLK_ENABLE();
 
   UARTsTunning();
-	ComparatorsTuning();
-	TimersTuning();
-	DMATuning();
-	SystemInterruptsTuning();
+  ComparatorsTuning();
+  TimersTuning();
+  DMATuning();
+  SystemInterruptsTuning();
 
   /* USER CODE END 2 */
 
@@ -255,9 +250,9 @@ int main(void)
 
   xSemaphoreMutex_Pice_Counter = xSemaphoreCreateMutex();
 
-    xTaskCreate(vTask_Scanner,(char*)"Task Scanner", 512, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_Scanner);
+    xTaskCreate(vTask_Scanner,(char*)"Task Scanner", 1024, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_Scanner);
     xTaskCreate(vTask_Kyeboard,(char*)"Task Keyboard", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_Keyboard);
-    xTaskCreate(vTask_ContainerDetect,(char*)"Task Container Detect", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_ContainerDetect);
+ //   xTaskCreate(vTask_ContainerDetect,(char*)"Task Container Detect", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_ContainerDetect);
     xTaskCreate(vTask_LCD,(char*)"Task LCD", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_LCD);
     xTaskCreate(vTask_USART_Service,(char*)"USART Service", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_USART_Service);
 
@@ -303,17 +298,18 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_CSI;
   RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
+  RCC_OscInitStruct.CSIState = RCC_CSI_ON;
+  RCC_OscInitStruct.CSICalibrationValue = 16;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_CSI;
   RCC_OscInitStruct.PLL.PLLM = 1;
-  RCC_OscInitStruct.PLL.PLLN = 24;
+  RCC_OscInitStruct.PLL.PLLN = 140;
   RCC_OscInitStruct.PLL.PLLP = 2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   RCC_OscInitStruct.PLL.PLLR = 2;
-  RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_3;
+  RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_2;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;
   RCC_OscInitStruct.PLL.PLLFRACN = 0;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -328,12 +324,12 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.SYSCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB3CLKDivider = RCC_APB3_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_APB1_DIV1;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV1;
-  RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV1;
+  RCC_ClkInitStruct.APB3CLKDivider = RCC_APB3_DIV2;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_APB1_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
+  RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_7) != HAL_OK)
   {
     Error_Handler();
   }
@@ -573,6 +569,21 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
   HAL_GPIO_Init(TIM3_CH1_LINE_ST_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : TIM3_CH2_LIGTH_Pin */
+     GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
+     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+     GPIO_InitStruct.Pull = GPIO_NOPULL;
+     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+     GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
+     HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
+
+     /*Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin */
+  	GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
+  	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  	GPIO_InitStruct.Pull = GPIO_NOPULL;
+  	HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
+  	HAL_GPIO_WritePin(TIM3_CH2_LIGHT_BLUE_GPIO_Port, TIM3_CH2_LIGHT_BLUE_Pin, 0);
+
   /*Configure GPIO pins : LD1_Pin LD3_Pin */
   GPIO_InitStruct.Pin = LD1_Pin|LD3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -622,60 +633,28 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
-  //------------------ USART1 pins -----------------------
+  /*Configure GPIO pins : S1_Pin */
+  GPIO_InitStruct.Pin = S1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
-    /*Configure GPIO pin : TIM3_CH1_LINE_ST_Pin */
-     GPIO_InitStruct.Pin = U1_TX_Pin;
-     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-     GPIO_InitStruct.Pull = GPIO_NOPULL;
-     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-     GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
-     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  // UART1 pin config
 
-     GPIO_InitStruct.Pin = U1_RX_Pin;
+  GPIO_InitStruct.Pin = U1_TX_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF4_USART1;
+    GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-     //-------------------------------------------
-
-    /*Configure GPIO pin : TIM3_CH2_LIGTH_Pin */
-     GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
-     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-     GPIO_InitStruct.Pull = GPIO_NOPULL;
-     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-     GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
-     HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
-
-     /*Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin */
-  	GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
-  	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  	GPIO_InitStruct.Pull = GPIO_NOPULL;
-  	HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
-  	HAL_GPIO_WritePin(TIM3_CH2_LIGHT_BLUE_GPIO_Port, TIM3_CH2_LIGHT_BLUE_Pin, 0);
-
-
-  	GPIO_InitStruct.Pin = S1_Pin;
-  	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  	GPIO_InitStruct.Pull = GPIO_NOPULL;
-  	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  	HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
-  	HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-
-  	/*Configure GPIO pin : CONTAINER_DETECT_Pin */
-  	  GPIO_InitStruct.Pin = CONTAINER_DETECT_Pin;
-  	  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  	  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  	  HAL_GPIO_Init(CONTAINER_DETECT_GPIO_Port, &GPIO_InitStruct);
-
-  	   /*Configure GPIO pins : OVER_COUNT_Pin*/
-  	   GPIO_InitStruct.Pin = OVER_COUNT_Pin;
-  	   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  	   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  	   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  	   HAL_GPIO_Init(OVER_COUNT_GPIO_Port, &GPIO_InitStruct);
+    GPIO_InitStruct.Pin = U1_RX_Pin;
+   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+   GPIO_InitStruct.Pull = GPIO_NOPULL;
+   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+   GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
+   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 }
 
@@ -912,7 +891,7 @@ void vTask_ContainerDetect(void *pvParameters)
 	/* Infinite loop */
   for(;;)
   {
-	  if (COMP12->SR & COMP_SR_C2VAL)
+	 /* if (COMP12->SR & COMP_SR_C2VAL)
 	  {
 
 	  }
@@ -970,7 +949,7 @@ void vTask_ContainerDetect(void *pvParameters)
 	  		  {
 	  			  OVER_COUNT_GPIO_Port->BSRR |=  (OVER_COUNT_Pin << 16); // Clear OVER CURRENT
 	  		  }
-	  	  }
+	  	  }*/
 
 	  osDelay(100);
   }
@@ -994,10 +973,10 @@ void vTask_Scanner(void *pvParameters)
 	/* Infinite loop */
 	for(;;)
 	{
+
 		xEventGroupWaitBits( xEventGroup_StatusFlags, Flag_Scanner_Busy, pdFALSE, pdFALSE, portMAX_DELAY );
 
 		HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
-
 
 		for (uint32_t y=LINE_DUMMY, z=0; y < (LINE_SIZE + LINE_DUMMY); y +=4, z +=1)
 		{
@@ -1233,7 +1212,7 @@ void vTask_Scanner(void *pvParameters)
 
 		NumObjectsInLastLine = NumObjectsInCurrentLine;
 
-		// Меняем буфер который надо заполн�?ть
+		// Мен�?ем буфер который надо заполн�?ть
 
 		xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Scanner_Busy);
 
@@ -1279,8 +1258,23 @@ void vTask_USART_Service (void *pvParameters)
 					USART1->TDR = *(data_tx_buffer + num_data_send);
 					num_data_tx--;
 					num_data_send++;
+
+					while(!(USART1->ISR & USART_ISR_TC))
+					{
+						vTaskDelay(1);
+					}
+
+					USART1->ICR |= USART_ICR_TCCF;
 				}
+
+
 			}
+
+			/*while(!(USART1->ISR & USART_ISR_TC))
+			{
+				vTaskDelay(1);
+			}*/
+
 
 			xEventGroupClearBits(xEventGroup_StatusFlags, Flag_USART_TX);
 		}
@@ -1551,7 +1545,7 @@ void Clear_Counter (void)
 
 void TimersTuning(void)
 {
-    TIM3->PSC = 274;
+    TIM3->PSC = 279;
     TIM3->ARR = 400;
     TIM3->CCR1 = 50;
     TIM3->CCR2 = 60;
@@ -1560,8 +1554,8 @@ void TimersTuning(void)
     TIM3->DIER = TIM_DIER_CC1IE;
 
     TIM17->PSC = 0;
-    TIM17->ARR = 55;
-    TIM17->CCR1 = 30;
+    TIM17->ARR = 56;
+    TIM17->CCR1 = 31;
     TIM17->CCMR1 = TIM_CCMR1_OC1M_0 | TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC1FE;
     TIM17->CCER = TIM_CCER_CC1E;
     TIM17->BDTR = TIM_BDTR_MOE;
@@ -1574,7 +1568,7 @@ void TimersTuning(void)
 
 void UARTsTunning(void)
 {
-	USART1->BRR = 0x373f; 			// 137.5 MHz / 9600 bout  = 14323
+	USART1->BRR = 14583; 			//  140 MHz / 9600 bout  = 10000
 	USART1->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE| USART_CR1_FIFOEN | USART_CR1_RXNEIE_RXFNEIE /*| TCIE*/;
 }
 

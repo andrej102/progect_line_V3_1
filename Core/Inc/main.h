@@ -70,9 +70,8 @@ void Error_Handler(void);
 #define PH0_MCU_GPIO_Port GPIOH
 #define PH1_MCU_Pin GPIO_PIN_1
 #define PH1_MCU_GPIO_Port GPIOH
-
-
-
+#define TIM3_CH1_LINE_ST_Pin GPIO_PIN_6
+#define TIM3_CH1_LINE_ST_GPIO_Port GPIOA
 #define LD1_Pin GPIO_PIN_0
 #define LD1_GPIO_Port GPIOB
 #define COMP1_INM_Pin GPIO_PIN_1
@@ -97,13 +96,10 @@ void Error_Handler(void);
 #define USB_FS_N_GPIO_Port GPIOA
 #define USB_FS_P_Pin GPIO_PIN_12
 #define USB_FS_P_GPIO_Port GPIOA
-
 #define TIM17_CH1_LINE_CLK_Pin GPIO_PIN_9
 #define TIM17_CH1_LINE_CLK_GPIO_Port GPIOB
-
 #define LD2_Pin GPIO_PIN_1
 #define LD2_GPIO_Port GPIOE
-
 /* USER CODE BEGIN Private defines */
 
 #define TIM3_CH2_LIGHT_Pin GPIO_PIN_7
@@ -120,7 +116,7 @@ void Error_Handler(void);
 
 #define U1_TX_Pin GPIO_PIN_6
 #define U1_TX_GPIO_Port GPIOB
-#define U1_RX_Pin GPIO_PIN_15
+#define U1_RX_Pin GPIO_PIN_7
 #define U1_RX_GPIO_Port GPIOB
 
 #define CONTAINER_DETECT_Pin GPIO_PIN_15
