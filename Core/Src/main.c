@@ -26,6 +26,8 @@
 
 #include "event_groups.h"
 #include "semphr.h"
+#include <stdlib.h>
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -164,6 +166,22 @@ const EventBits_t Flag_Container_Removed =    		0x00000100;
 const EventBits_t Flag_Counter_Not_Visible =    	0x00000200;
 
 SemaphoreHandle_t xSemaphoreMutex_Pice_Counter;
+
+uint8_t active_page = 0;
+
+uint8_t num_param = 0;
+char param_str[32] = {0};
+
+uint32_t min_area = 25;
+float k_1 = 1.85;
+float k_2 = 1.85;
+uint32_t div_12 = 800;
+
+uint8_t change_num_param = 0;
+
+void tft_show_param(void);
+void service_page_0(uint8_t but, uint8_t val);
+void service_page_1(uint8_t but, uint8_t val);
 
 /* USER CODE END PFP */
 
@@ -675,68 +693,71 @@ void vTask_LCD(void *pvParameters)
 
 	for(;;)
 	{
-		tft_show_nun_pices(numObjects);
-
+		if (!active_page)
+		{
+			tft_show_nun_pices(numObjects);
 
 #ifdef USE_DEBUG_MODE
-
-		tft_show_area_pices(num_show_object_area);
+			tft_show_area_pices(num_show_object_area);
 #endif
 
 			//-----
 
-		if (timer_over_count_signal_display)
-		{
-			timer_over_count_signal_display--;
-			if (!timer_over_count_signal_display)
+			if (timer_over_count_signal_display)
 			{
-				tft_show_overcount(0);
-			}
-		}
-
-		if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Over_Count_Display)
-		{
-			xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Over_Count_Display);
-
-			if (!timer_over_count_signal_display)
-			{
-				tft_show_overcount(1);
+				timer_over_count_signal_display--;
+				if (!timer_over_count_signal_display)
+				{
+					tft_show_overcount(0);
+				}
 			}
 
-			timer_over_count_signal_display = 5;
-		}
+			if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Over_Count_Display)
+			{
+				xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Over_Count_Display);
+
+				if (!timer_over_count_signal_display)
+				{
+					tft_show_overcount(1);
+				}
+
+				timer_over_count_signal_display = 5;
+			}
 
 			//------
 
-		if (timer_counter_flashing_display)
-		{
-			timer_counter_flashing_display--;
-		}
+			if (timer_counter_flashing_display)
+			{
+				timer_counter_flashing_display--;
+			}
 
-		if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Container_Removed)
-		{
-			if (!timer_counter_flashing_display)
+			if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Container_Removed)
+			{
+				if (!timer_counter_flashing_display)
+				{
+					if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Counter_Not_Visible)
+					{
+						tft_show_hide_counter(1);
+					}
+					else
+					{
+						tft_show_hide_counter(0);
+					}
+
+					timer_counter_flashing_display = 5;
+				}
+			}
+			else
 			{
 				if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Counter_Not_Visible)
 				{
 					tft_show_hide_counter(1);
 				}
-				else
-				{
-					tft_show_hide_counter(0);
-				}
-
-				timer_counter_flashing_display = 5;
 			}
-
-
 		}
 		else
 		{
-			if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Counter_Not_Visible)
-			{
-				tft_show_hide_counter(1);
-			}
+			tft_show_param();
 		}
 
 		vTaskDelay(100);
@@ -744,7 +765,195 @@ void vTask_LCD(void *pvParameters)
 
 }
 
+/*
+ *
+ */
 
+void service_page_0(uint8_t but, uint8_t val)
+{
+	GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+	switch(but)
+	{
+		case 16 :
+		{
+			if (val)
+			{
+				active_page = 1;
+				num_param = 0;
+				param_str[0] = 0;
+				change_num_param = 0;
+			}
+
+			break;
+		}
+
+		case 2 :
+		{
+		  if (val)
+		  {
+			  Clear_Counter();
+		  }
+
+		  break;
+		}
+
+		case 5 :
+		{
+		  if (val)
+		  {
+			  xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Mode_Transparent);
+			  Clear_Counter();
+		  }
+		  else if (!val)
+		  {
+			  xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Mode_Transparent);
+			  Clear_Counter();
+		  }
+
+		  break;
+		}
+
+		case 4 :
+		{
+		  if (val)
+		  {
+			  if(num_show_object_area < (numObjects + 2))
+			  {
+				  num_show_object_area++;
+			  }
+			  else
+			  {
+				  num_show_object_area = 1;
+			  }
+		  }
+
+		  break;
+		}
+
+		case 3 :
+		{
+		  if (val)
+		  {
+			  if(num_show_object_area > 1)
+			  {
+				  num_show_object_area--;
+			  }
+		  }
+
+		  break;
+		}
+
+		case 0x14 :
+		{
+		  if (val)
+		  {
+			  xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Mode_Blue);
+
+			  /*Configure GPIO pin : TIM3_CH2_LIGTH_Pin */
+				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
+				GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+				GPIO_InitStruct.Pull = GPIO_NOPULL;
+				HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
+				HAL_GPIO_WritePin(TIM3_CH2_LIGHT_GPIO_Port, TIM3_CH2_LIGHT_Pin, 0);
+
+				 /*Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin */
+				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
+				GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+				GPIO_InitStruct.Pull = GPIO_NOPULL;
+				GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+				GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
+				HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
+		  }
+		  else if (!val)
+		  {
+			  /*Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin */
+				 GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
+				 GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+				 GPIO_InitStruct.Pull = GPIO_NOPULL;
+				 HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
+				 HAL_GPIO_WritePin(TIM3_CH2_LIGHT_BLUE_GPIO_Port, TIM3_CH2_LIGHT_BLUE_Pin, 0);
+
+				 /*Configure GPIO pin : TIM3_CH2_LIGTH_Pin */
+				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
+				GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+				GPIO_InitStruct.Pull = GPIO_NOPULL;
+				GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+				GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
+				HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
+
+				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Mode_Blue);
+		  }
+
+		  break;
+		}
+
+		default : break;
+	}
+}
+
+/*
+ *
+ */
+
+void service_page_1(uint8_t but, uint8_t val)
+{
+	uint32_t len =0;
+
+	len = strlen(param_str);
+
+	if (num_param)
+	{
+		switch(but)
+		{
+			case 4 : if (val) if (len) {param_str[len] = '0'; param_str[len+1] = 0;} break;
+			case 5 : if (val) param_str[len] = '1'; param_str[len+1] = 0; break;
+			case 12 : if (val) param_str[len] = '2'; param_str[len+1] = 0; break;
+			case 13 : if (val) param_str[len] = '3'; param_str[len+1] = 0; break;
+			case 14 : if (val) param_str[len] = '4'; param_str[len+1] = 0; break;
+			case 15 : if (val) param_str[len] = '5'; param_str[len+1] = 0; break;
+			case 16 : if (val) param_str[len] = '6'; param_str[len+1] = 0; break;
+			case 17 : if (val) param_str[len] = '7'; param_str[len+1] = 0; break;
+			case 18 : if (val) param_str[len] = '8'; param_str[len+1] = 0; break;
+			case 19 : if (val) param_str[len] = '9'; param_str[len+1] = 0; break;
+			case 21 : if (val) param_str[len-1] = 0; break;
+			case 20 : if (val) param_str[len] = '.'; param_str[len+1] = 0; break;
+
+			default : break;
+		}
+	}
+
+	switch(but)
+	{
+		case 1 : if (val) active_page = 1; break;
+		case 2 : if (val) num_param = 1; sprintf(param_str,"%u", min_area); change_num_param = 1; break;
+		case 3 : if (val) num_param = 2; sprintf(param_str,"%f", k_1); change_num_param = 2; break;
+		case 6 : if (val) num_param = 3; sprintf(param_str,"%f", k_2); change_num_param = 3; break;
+		case 7 : if (val) num_param = 4; sprintf(param_str,"%u", div_12); change_num_param = 4; break;
+		case 22 :
+			if (val)
+			{
+				switch(num_param)
+				{
+					case 1 : min_area = atoi(param_str); change_num_param = 1; break;
+					case 2 : k_1 = atof(param_str); change_num_param = 2; break;
+					case 3 : k_2 = atof(param_str); change_num_param = 3; break;
+					case 4 : div_12 = atoi(param_str); change_num_param = 4; break;
+					default : break;
+				}
+
+				num_param = 0;
+			}
+			break;
+
+			default : break;
+		}
+
+}
+
+/*
+ *
+ */
 
 /*
  *
@@ -752,13 +961,36 @@ void vTask_LCD(void *pvParameters)
 
 void vTask_Kyeboard(void *pvParameters)
 {
-	GPIO_InitTypeDef GPIO_InitStruct = {0};
-	/* Infinite loop */
+
   for(;;)
   {
 	  // defining button events
 
 	  if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_UART_RX_Buffer_Busy)
+	  {
+		  if (uart_rx_buffer_pointer == 7)
+		  {
+			  if (uart_rx_buffer[0] == 0x65)
+			  {
+				  if (uart_rx_buffer[1] == 0x00)
+				  {
+					  service_page_0(uart_rx_buffer[2], uart_rx_buffer[3]);
+				  }
+				  else if (uart_rx_buffer[1] == 0x01)
+				  {
+					  service_page_1(uart_rx_buffer[2], uart_rx_buffer[3]);
+				  }
+			  }
+		  }
+
+		  uart_rx_buffer_pointer = 0;
+
+		  xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_RX_Buffer_Busy);
+	  }
+
+	  osDelay(100);
+
+	  /*if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_UART_RX_Buffer_Busy)
 	  {
 		  if (uart_rx_buffer_pointer == 7)
 		  {
@@ -796,13 +1028,13 @@ void vTask_Kyeboard(void *pvParameters)
 					  {
 						  if (uart_rx_buffer[3] == 0x01)
 						  {
-							  if(num_show_object_area < (numObjects + 2))
+							  if(num_show_object_area < numObjects)
 							  {
 								  num_show_object_area++;
 							  }
 							  else
 							  {
-								  num_show_object_area = 1;
+								  num_show_object_area = 0;
 							  }
 						  }
 
@@ -813,7 +1045,7 @@ void vTask_Kyeboard(void *pvParameters)
 					  {
 						  if (uart_rx_buffer[3] == 0x01)
 						  {
-							  if(num_show_object_area > 1)
+							  if(num_show_object_area > 0)
 							  {
 								  num_show_object_area--;
 							  }
@@ -828,14 +1060,14 @@ void vTask_Kyeboard(void *pvParameters)
 						  {
 							  xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Mode_Blue);
 
-							  /*Configure GPIO pin : TIM3_CH2_LIGTH_Pin */
+							  //Configure GPIO pin : TIM3_CH2_LIGTH_Pin
 								GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
 								GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
 								GPIO_InitStruct.Pull = GPIO_NOPULL;
 								HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
 								HAL_GPIO_WritePin(TIM3_CH2_LIGHT_GPIO_Port, TIM3_CH2_LIGHT_Pin, 0);
 
-							     /*Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin */
+							     //Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin
 								GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
 								GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
 								GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -845,15 +1077,14 @@ void vTask_Kyeboard(void *pvParameters)
 						  }
 						  else if (uart_rx_buffer[3] == 0x00)
 						  {
-							  /*Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin */
+							  //Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin
 								 GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
 								 GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
 								 GPIO_InitStruct.Pull = GPIO_NOPULL;
 								 HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
 								 HAL_GPIO_WritePin(TIM3_CH2_LIGHT_BLUE_GPIO_Port, TIM3_CH2_LIGHT_BLUE_Pin, 0);
 
-								 /*Configure GPIO pin : TIM3_CH2_LIGTH_Pin */
-								GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
+								//Configure GPIO pin : TIM3_CH2_LIGTH_Pin								GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
 								GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
 								GPIO_InitStruct.Pull = GPIO_NOPULL;
 								GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
@@ -876,7 +1107,7 @@ void vTask_Kyeboard(void *pvParameters)
 		  xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_RX_Buffer_Busy);
 	  }
 
-	  osDelay(100);
+	  osDelay(100);*/
   }
 }
 
@@ -978,138 +1209,155 @@ void vTask_Scanner(void *pvParameters)
 
 		HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
 
-		for (uint32_t y=LINE_DUMMY, z=0; y < (LINE_SIZE + LINE_DUMMY); y +=4, z +=1)
+		if (!active_page)
 		{
-			BufferCOMP2[z] = BufferCOMP1[y] ;
-		}
-
-
-		NumObjectsInCurrentLine = 0;
-		lastbit = 0;
-
-		for (j = 0; j < (LINE_SIZE/4); j++)
-		{
-			if(BufferCOMP2[j] & COMP_SR_C1VAL)
+			for (uint32_t y=LINE_DUMMY, z=0; y < (LINE_SIZE + LINE_DUMMY); y +=4, z +=1)
 			{
-				current_line[j] = 0;
-				lastbit = 0;
+				BufferCOMP2[z] = BufferCOMP1[y] ;
 			}
-			else
+
+
+			NumObjectsInCurrentLine = 0;
+			lastbit = 0;
+
+			for (j = 0; j < (LINE_SIZE/4); j++)
 			{
-				if(!lastbit)
+				if(BufferCOMP2[j] & COMP_SR_C1VAL)
 				{
-					NumObjectsInCurrentLine++;
-
-					p_objects_current_line[NumObjectsInCurrentLine-1] = &objects_current_line[NumObjectsInCurrentLine-1];
-
-					p_objects_current_line[NumObjectsInCurrentLine-1]->area = 0;
+					current_line[j] = 0;
+					lastbit = 0;
 				}
-
-				current_line[j] = NumObjectsInCurrentLine;
-				p_objects_current_line[NumObjectsInCurrentLine-1]->area++;
-				lastbit = 1;
-
-				if(last_line[j])
+				else
 				{
-					p_objects_last_line[last_line[j]-1]->cont = 1;
-
-					if (!p_objects_last_line[last_line[j]-1]->sl)
+					if(!lastbit)
 					{
-						p_objects_last_line[last_line[j]-1]->sl = current_line[j];
-						p_objects_current_line[current_line[j]-1]->area += p_objects_last_line[last_line[j]-1]->area;
+						NumObjectsInCurrentLine++;
+
+						p_objects_current_line[NumObjectsInCurrentLine-1] = &objects_current_line[NumObjectsInCurrentLine-1];
+
+						p_objects_current_line[NumObjectsInCurrentLine-1]->area = 0;
 					}
-					else
-					{
-						if (p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl - 1] != p_objects_current_line[current_line[j]-1])
-						{
-							p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl-1]->area += p_objects_current_line[current_line[j]-1]->area;
 
-							p_objects_current_line[current_line[j]-1] = p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl - 1];
+					current_line[j] = NumObjectsInCurrentLine;
+					p_objects_current_line[NumObjectsInCurrentLine-1]->area++;
+					lastbit = 1;
+
+					if(last_line[j])
+					{
+						p_objects_last_line[last_line[j]-1]->cont = 1;
+
+						if (!p_objects_last_line[last_line[j]-1]->sl)
+						{
+							p_objects_last_line[last_line[j]-1]->sl = current_line[j];
+							p_objects_current_line[current_line[j]-1]->area += p_objects_last_line[last_line[j]-1]->area;
 						}
-					}
-				}
-			}
-
-			// we analyze the connectivity of the objects of the current line with the objects of the previous line
-			// and arrange the corresponding signs (connectivity and continuation)
-
-			last_line[j] = current_line[j];
-		}
-
-		if (xSemaphoreTake(xSemaphoreMutex_Pice_Counter, 1) == pdTRUE)
-		{
-			// scan result analysis
-
-			if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Mode_Transparent)
-			{
-				// Transparent mode
-
-				if (!transparent_object_start)
-				{
-					if (NumObjectsInCurrentLine)
-					{
-						transparent_object_start = 1;
-						Objects_area[numObjects] = 0;
-						transparent_object_overtime = HAL_GetTick();
-						transparent_object_current_line_overtime = HAL_GetTick();
-					}
-				}
-
-				if(transparent_object_start)
-				{
-					if ((HAL_GetTick() - transparent_object_overtime > TRANSPARENT_OBJECT_OVERTIME) || ((HAL_GetTick() - transparent_object_current_line_overtime > TRANSPARENT_OBJECT_CURRENT_LINE_OVERTIME)))
-					{
-						transparent_object_start = 0;
-						numObjects++;
-					}
-					else
-					{
-						if (NumObjectsInCurrentLine)
+						else
 						{
-							transparent_object_current_line_overtime = HAL_GetTick();
-
-							for(j = 0; j < NumObjectsInCurrentLine; j++)
+							if (p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl - 1] != p_objects_current_line[current_line[j]-1])
 							{
-								Objects_area[numObjects] += p_objects_current_line[j]->area;
+								p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl-1]->area += p_objects_current_line[current_line[j]-1]->area;
+
+								p_objects_current_line[current_line[j]-1] = p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl - 1];
 							}
 						}
 					}
 				}
+
+				// we analyze the connectivity of the objects of the current line with the objects of the previous line
+				// and arrange the corresponding signs (connectivity and continuation)
+
+				last_line[j] = current_line[j];
 			}
-			else
+
+			if (xSemaphoreTake(xSemaphoreMutex_Pice_Counter, 1) == pdTRUE)
 			{
-						// Common mode
+				// scan result analysis
 
-				// check if there are completed objects on the previous line
-
-				line_object_t * previous_p_objects_last_line = NULL;
-
-				for (j=0; j < NumObjectsInLastLine; j++)
+				if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Mode_Transparent)
 				{
-					if (!p_objects_last_line[j]->cont)
+					// Transparent mode
+
+					if (!transparent_object_start)
 					{
-						if (p_objects_last_line[j] == previous_p_objects_last_line)
+						if (NumObjectsInCurrentLine)
 						{
-							continue;
+							transparent_object_start = 1;
+							Objects_area[numObjects] = 0;
+							transparent_object_overtime = HAL_GetTick();
+							transparent_object_current_line_overtime = HAL_GetTick();
 						}
+					}
 
-						numObjects_temp = numObjects;
-
-						if(p_objects_last_line[j]->area < 3000)
+					if(transparent_object_start)
+					{
+						if ((HAL_GetTick() - transparent_object_overtime > TRANSPARENT_OBJECT_OVERTIME) || ((HAL_GetTick() - transparent_object_current_line_overtime > TRANSPARENT_OBJECT_CURRENT_LINE_OVERTIME)))
 						{
-							if (max_area)
+							transparent_object_start = 0;
+							numObjects++;
+						}
+						else
+						{
+							if (NumObjectsInCurrentLine)
 							{
-								while (p_objects_last_line[j]->area)
+								transparent_object_current_line_overtime = HAL_GetTick();
+
+								for(j = 0; j < NumObjectsInCurrentLine; j++)
 								{
-									if (p_objects_last_line[j]->area > max_area)
+									Objects_area[numObjects] += p_objects_current_line[j]->area;
+								}
+							}
+						}
+					}
+				}
+				else
+				{
+							// Common mode
+
+					// check if there are completed objects on the previous line
+
+					line_object_t * previous_p_objects_last_line = NULL;
+
+					for (j=0; j < NumObjectsInLastLine; j++)
+					{
+						if (!p_objects_last_line[j]->cont)
+						{
+							if (p_objects_last_line[j] == previous_p_objects_last_line)
+							{
+								continue;
+							}
+
+							numObjects_temp = numObjects;
+
+							if(p_objects_last_line[j]->area < 3000)
+							{
+								if (max_area)
+								{
+									while (p_objects_last_line[j]->area)
 									{
-										//Objects_area[numObjects] = max_area/2;
-										//p_objects_last_line[j]->area -= (max_area/2);
-										Objects_area[numObjects] = max_area;
-										p_objects_last_line[j]->area -= max_area;
-										numObjects++;
+										if (p_objects_last_line[j]->area > max_area)
+										{
+											//Objects_area[numObjects] = max_area/2;
+											//p_objects_last_line[j]->area -= (max_area/2);
+											Objects_area[numObjects] = max_area;
+											p_objects_last_line[j]->area -= max_area;
+											numObjects++;
+										}
+										else if (p_objects_last_line[j]->area < min_area)
+										{
+											p_objects_last_line[j]->area = 0;
+										}
+										else
+										{
+											Objects_area[numObjects] = p_objects_last_line[j]->area;
+											p_objects_last_line[j]->area = 0;
+											numObjects++;
+										}
+
 									}
-									else if (p_objects_last_line[j]->area < 25)
+								}
+								else
+								{
+									if (p_objects_last_line[j]->area < min_area)
 									{
 										p_objects_last_line[j]->area = 0;
 									}
@@ -1119,100 +1367,84 @@ void vTask_Scanner(void *pvParameters)
 										p_objects_last_line[j]->area = 0;
 										numObjects++;
 									}
-
-								}
-							}
-							else
-							{
-								if (p_objects_last_line[j]->area < 25)
-								{
-									p_objects_last_line[j]->area = 0;
-								}
-								else
-								{
-									Objects_area[numObjects] = p_objects_last_line[j]->area;
-									p_objects_last_line[j]->area = 0;
-									numObjects++;
-								}
-							}
-
-							if (numObjects_temp != numObjects)
-							{
-								for (p=1; p < NUM_PICES_PERIOD; p++)
-								{
-									pices_time[p-1] = pices_time[p];
 								}
 
-								pices_time[NUM_PICES_PERIOD - 1]  = HAL_GetTick();
-
-								if (numObjects > (NUM_PICES_PERIOD - 1))
+								if (numObjects_temp != numObjects)
 								{
-									pice_period = (pices_time[NUM_PICES_PERIOD - 1] - pices_time[0]) / NUM_PICES_PERIOD;
-									if (pice_period < MIN_PICE_PERIOD)
+									for (p=1; p < NUM_PICES_PERIOD; p++)
 									{
-										counter_num_extra_count++;
-										xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
+										pices_time[p-1] = pices_time[p];
+									}
 
-										for (p=0; p < NUM_PICES_PERIOD; p++)
+									pices_time[NUM_PICES_PERIOD - 1]  = HAL_GetTick();
+
+									if (numObjects > (NUM_PICES_PERIOD - 1))
+									{
+										pice_period = (pices_time[NUM_PICES_PERIOD - 1] - pices_time[0]) / NUM_PICES_PERIOD;
+										if (pice_period < MIN_PICE_PERIOD)
 										{
-											pices_time[p] = 0;
+											counter_num_extra_count++;
+											xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
+
+											for (p=0; p < NUM_PICES_PERIOD; p++)
+											{
+												pices_time[p] = 0;
+											}
 										}
 									}
 								}
 							}
-						}
-						else
-						{
-							p_objects_last_line[j]->area = 0;
+							else
+							{
+								p_objects_last_line[j]->area = 0;
+							}
+
+							previous_p_objects_last_line = p_objects_last_line[j];
 						}
 
-						previous_p_objects_last_line = p_objects_last_line[j];
-					}
-
-					if (numObjects == 10)
-					{
-						midle_area = 0;
-
-						for (i=0;i<10;i++)
+						if (numObjects == 10)
 						{
-							midle_area += Objects_area[i];
-						}
-						midle_area /=10;
+							midle_area = 0;
 
-						if(midle_area < 800/*70*/)
-						{
-							max_area = midle_area * 1.85;//2.4;
-						}
-						else
-						{
-							max_area = midle_area * 1.85;
+							for (i=0;i<10;i++)
+							{
+								midle_area += Objects_area[i];
+							}
+							midle_area /=10;
+
+							if(midle_area < div_12)
+							{
+								max_area = midle_area * k_1;
+							}
+							else
+							{
+								max_area = midle_area * k_2;
+							}
 						}
 					}
 				}
+
+				if(numObjects > 1000)
+				{
+					numObjects = 0;
+				}
+
+				xSemaphoreGive(xSemaphoreMutex_Pice_Counter);
 			}
 
-			if(numObjects > 1000)
+			// перено�?им объекты текущей линии в предыдущую
+
+			for (j=0; j < NumObjectsInCurrentLine; j++)
 			{
-				numObjects = 0;
+				p_objects_last_line[j] = &objects_last_line[0] + (p_objects_current_line[j] - &objects_current_line[0]);
+
+				p_objects_last_line[j]->area = p_objects_current_line[j]->area;
+				p_objects_last_line[j]->cont = 0;
+				p_objects_last_line[j]->sl = 0;
 			}
 
-			xSemaphoreGive(xSemaphoreMutex_Pice_Counter);
+			NumObjectsInLastLine = NumObjectsInCurrentLine;
 		}
-
-		// перено�?им объекты текущей линии в предыдущую
-
-		for (j=0; j < NumObjectsInCurrentLine; j++)
-		{
-			p_objects_last_line[j] = &objects_last_line[0] + (p_objects_current_line[j] - &objects_current_line[0]);
-
-			p_objects_last_line[j]->area = p_objects_current_line[j]->area;
-			p_objects_last_line[j]->cont = 0;
-			p_objects_last_line[j]->sl = 0;
-		}
-
-		NumObjectsInLastLine = NumObjectsInCurrentLine;
-
-		// Мен�?ем буфер который надо заполн�?ть
 
 		xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Scanner_Busy);
 
@@ -1280,6 +1512,133 @@ void vTask_USART_Service (void *pvParameters)
 		}
 	}
 }
+
+/*
+ *
+ */
+
+void tft_show_param(void)
+{
+	uint32_t protect_counter = HAL_GetTick();
+
+	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
+	{
+		vTaskDelay(10);
+	}
+
+	if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
+	{
+		num_data_tx =0;
+
+		if(num_param)
+		{
+			if ((change_num_param > 0) && (change_num_param < 5))
+			{
+				switch(change_num_param)
+				{
+					case 1 : sprintf(data_tx_buffer, "page1.n0.bco=65504"); break;
+					case 2 : sprintf(data_tx_buffer, "page1.n2.bco=65504"); break;
+					case 3 : sprintf(data_tx_buffer, "page1.n3.bco=65504"); break;
+					case 4 : sprintf(data_tx_buffer, "page1.n4.bco=65504"); break;
+				}
+
+				num_data_tx = strlen(data_tx_buffer);
+				data_tx_buffer[num_data_tx] = 0xff;
+				num_data_tx++;
+				data_tx_buffer[num_data_tx] = 0xff;
+				num_data_tx++;
+				data_tx_buffer[num_data_tx] = 0xff;
+				num_data_tx++;
+				data_tx_buffer[num_data_tx] = 0x00;
+			}
+
+			change_num_param = 0;
+
+			switch(num_param)
+			{
+				case 1 : sprintf(data_tx_buffer + num_data_tx, "page1.n0.val=%s", param_str); break;
+				case 2 : sprintf(data_tx_buffer + num_data_tx, "page1.n2.val=%s", param_str); break;
+				case 3 : sprintf(data_tx_buffer + num_data_tx, "page1.n3.val=%s", param_str); break;
+				case 4 : sprintf(data_tx_buffer + num_data_tx, "page1.n4.val=%s", param_str); break;
+			}
+
+			num_data_tx += strlen(data_tx_buffer + num_data_tx);
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0x00;
+		}
+		else
+		{
+			if ((change_num_param > 0) && (change_num_param < 5))
+			{
+				switch(change_num_param)
+				{
+					case 1 : sprintf(data_tx_buffer, "page1.n0.bco=65535"); break;
+					case 2 : sprintf(data_tx_buffer, "page1.n2.bco=65535"); break;
+					case 3 : sprintf(data_tx_buffer, "page1.n3.bco=65535"); break;
+					case 4 : sprintf(data_tx_buffer, "page1.n4.bco=65535"); break;
+				}
+
+				num_data_tx = strlen(data_tx_buffer);
+				data_tx_buffer[num_data_tx] = 0xff;
+				num_data_tx++;
+				data_tx_buffer[num_data_tx] = 0xff;
+				num_data_tx++;
+				data_tx_buffer[num_data_tx] = 0xff;
+				num_data_tx++;
+				data_tx_buffer[num_data_tx] = 0x00;
+			}
+
+			change_num_param = 0;
+
+			sprintf(data_tx_buffer + num_data_tx, "page1.n0.val=%d", min_area);
+			num_data_tx = strlen(data_tx_buffer);
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			sprintf(data_tx_buffer + num_data_tx, "page1.n2.val=%f", k_1);
+			num_data_tx += strlen(data_tx_buffer + num_data_tx);
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0x00;
+			sprintf(data_tx_buffer + num_data_tx, "page1.n3.val=%f", k_2);
+			num_data_tx += strlen(data_tx_buffer + num_data_tx);
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0x00;
+			sprintf(data_tx_buffer + num_data_tx, "page1.n4.val=%d", div_12);
+			num_data_tx += strlen(data_tx_buffer + num_data_tx);
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0xff;
+			num_data_tx++;
+			data_tx_buffer[num_data_tx] = 0x00;
+		}
+
+		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
+	}
+}
+
+/*
+ *
+ */
 
 void tft_show_clear_mode(uint8_t on_off)
 {
