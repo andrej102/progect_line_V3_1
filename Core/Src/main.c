@@ -164,6 +164,7 @@ const EventBits_t Flag_Mode_Blue = 					0x00000040;
 const EventBits_t Flag_Over_Count_Display =    		0x00000080;
 const EventBits_t Flag_Container_Removed =    		0x00000100;
 const EventBits_t Flag_Counter_Not_Visible =    	0x00000200;
+const EventBits_t Flag_Touch_Key_Poling		 =    	0x00000400;
 
 SemaphoreHandle_t xSemaphoreMutex_Pice_Counter;
 
@@ -757,7 +758,15 @@ void vTask_LCD(void *pvParameters)
 		}
 		else
 		{
+			while(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Touch_Key_Poling)
+			{
+				vTaskDelay(2);
+			}
+
+			xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Touch_Key_Poling);
 			tft_show_param();
+			xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Touch_Key_Poling);
+
 		}
 
 		vTaskDelay(100);
@@ -916,7 +925,19 @@ void service_page_1(uint8_t but, uint8_t val)
 			case 17 : if (val) param_str[len] = '7'; param_str[len+1] = 0; break;
 			case 18 : if (val) param_str[len] = '8'; param_str[len+1] = 0; break;
 			case 19 : if (val) param_str[len] = '9'; param_str[len+1] = 0; break;
-			case 21 : if (val) param_str[len-1] = 0; break;
+			case 21 :
+				if (val)
+				{
+					if(len > 1)
+					{
+						param_str[len-1] = 0;
+					}
+					else if(len == 1)
+					{
+						param_str[len-1] = '0';
+					}
+				}
+				break;
 			case 20 : if (val) param_str[len] = '.'; param_str[len+1] = 0; break;
 
 			default : break;
@@ -926,10 +947,10 @@ void service_page_1(uint8_t but, uint8_t val)
 	switch(but)
 	{
 		case 1 : if (val) active_page = 1; break;
-		case 2 : if (val) num_param = 1; sprintf(param_str,"%u", min_area); change_num_param = 1; break;
-		case 3 : if (val) num_param = 2; sprintf(param_str,"%f", k_1); change_num_param = 2; break;
-		case 6 : if (val) num_param = 3; sprintf(param_str,"%f", k_2); change_num_param = 3; break;
-		case 7 : if (val) num_param = 4; sprintf(param_str,"%u", div_12); change_num_param = 4; break;
+		case 2 : if (val) sprintf(param_str,"%u", min_area); change_num_param = 1; break;
+		case 3 : if (val) sprintf(param_str,"%f", k_1); change_num_param = 2; break;
+		case 6 : if (val) sprintf(param_str,"%f", k_2); change_num_param = 3; break;
+		case 7 : if (val) sprintf(param_str,"%u", div_12); change_num_param = 4; break;
 		case 22 :
 			if (val)
 			{
@@ -941,8 +962,6 @@ void service_page_1(uint8_t but, uint8_t val)
 					case 4 : div_12 = atoi(param_str); change_num_param = 4; break;
 					default : break;
 				}
-
-				num_param = 0;
 			}
 			break;
 
@@ -1517,6 +1536,23 @@ void vTask_USART_Service (void *pvParameters)
  *
  */
 
+void add_end_command(uint8_t * data, uint8_t * init_index)
+{
+	uint8_t index = *init_index;
+
+	index += strlen(data + index);
+	data[index] = 0xff;
+	data_tx_buffer[index + 1] = 0xff;
+	data_tx_buffer[index + 2] = 0xff;
+	index +=3;
+
+	*init_index = index;
+}
+
+/*
+ *
+ */
+
 void tft_show_param(void)
 {
 	uint32_t protect_counter = HAL_GetTick();
@@ -1530,107 +1566,71 @@ void tft_show_param(void)
 	{
 		num_data_tx =0;
 
-		if(num_param)
+		if ((change_num_param > 0) && (change_num_param < 5))
 		{
-			if ((change_num_param > 0) && (change_num_param < 5))
+			if(num_param)
+			{
+				if(num_param != change_num_param)
+				{// деактивируем текущее поле и активируем новое
+					switch(num_param)
+					{
+						case 1 : sprintf(data_tx_buffer + num_data_tx, "page1.n0.bco=65535"); break;
+						case 2 : sprintf(data_tx_buffer + num_data_tx, "page1.n2.bco=65535"); break;
+						case 3 : sprintf(data_tx_buffer + num_data_tx, "page1.n3.bco=65535"); break;
+						case 4 : sprintf(data_tx_buffer + num_data_tx, "page1.n4.bco=65535"); break;
+					}
+					add_end_command(data_tx_buffer, &num_data_tx);
+
+					switch(change_num_param)
+					{
+						case 1 : sprintf(data_tx_buffer + num_data_tx, "page1.n0.bco=65504"); break;
+						case 2 : sprintf(data_tx_buffer + num_data_tx, "page1.n2.bco=65504"); break;
+						case 3 : sprintf(data_tx_buffer + num_data_tx, "page1.n3.bco=65504"); break;
+						case 4 : sprintf(data_tx_buffer + num_data_tx, "page1.n4.bco=65504"); break;
+					}
+					add_end_command(data_tx_buffer, &num_data_tx);
+
+					num_param = change_num_param;
+				}
+				else // если деактивируем поле
+				{
+					switch(change_num_param)
+					{
+						case 1 : sprintf(data_tx_buffer + num_data_tx, "page1.n0.bco=65535"); break;
+						case 2 : sprintf(data_tx_buffer + num_data_tx, "page1.n2.bco=65535"); break;
+						case 3 : sprintf(data_tx_buffer + num_data_tx, "page1.n3.bco=65535"); break;
+						case 4 : sprintf(data_tx_buffer + num_data_tx, "page1.n4.bco=65535"); break;
+					}
+					add_end_command(data_tx_buffer, &num_data_tx);
+
+					num_param = 0;
+				}
+			}
+			else // если небыло активно поле, то активируем
 			{
 				switch(change_num_param)
 				{
-					case 1 : sprintf(data_tx_buffer, "page1.n0.bco=65504"); break;
-					case 2 : sprintf(data_tx_buffer, "page1.n2.bco=65504"); break;
-					case 3 : sprintf(data_tx_buffer, "page1.n3.bco=65504"); break;
-					case 4 : sprintf(data_tx_buffer, "page1.n4.bco=65504"); break;
+					case 1 : sprintf(data_tx_buffer + num_data_tx, "page1.n0.bco=65504"); break;
+					case 2 : sprintf(data_tx_buffer + num_data_tx, "page1.n2.bco=65504"); break;
+					case 3 : sprintf(data_tx_buffer + num_data_tx, "page1.n3.bco=65504"); break;
+					case 4 : sprintf(data_tx_buffer + num_data_tx, "page1.n4.bco=65504"); break;
 				}
+				add_end_command(data_tx_buffer, &num_data_tx);
 
-				num_data_tx = strlen(data_tx_buffer);
-				data_tx_buffer[num_data_tx] = 0xff;
-				num_data_tx++;
-				data_tx_buffer[num_data_tx] = 0xff;
-				num_data_tx++;
-				data_tx_buffer[num_data_tx] = 0xff;
-				num_data_tx++;
-				data_tx_buffer[num_data_tx] = 0x00;
+				num_param = change_num_param;
 			}
 
 			change_num_param = 0;
-
-			switch(num_param)
-			{
-				case 1 : sprintf(data_tx_buffer + num_data_tx, "page1.n0.val=%s", param_str); break;
-				case 2 : sprintf(data_tx_buffer + num_data_tx, "page1.n2.val=%s", param_str); break;
-				case 3 : sprintf(data_tx_buffer + num_data_tx, "page1.n3.val=%s", param_str); break;
-				case 4 : sprintf(data_tx_buffer + num_data_tx, "page1.n4.val=%s", param_str); break;
-			}
-
-			num_data_tx += strlen(data_tx_buffer + num_data_tx);
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0x00;
 		}
-		else
-		{
-			if ((change_num_param > 0) && (change_num_param < 5))
-			{
-				switch(change_num_param)
-				{
-					case 1 : sprintf(data_tx_buffer, "page1.n0.bco=65535"); break;
-					case 2 : sprintf(data_tx_buffer, "page1.n2.bco=65535"); break;
-					case 3 : sprintf(data_tx_buffer, "page1.n3.bco=65535"); break;
-					case 4 : sprintf(data_tx_buffer, "page1.n4.bco=65535"); break;
-				}
 
-				num_data_tx = strlen(data_tx_buffer);
-				data_tx_buffer[num_data_tx] = 0xff;
-				num_data_tx++;
-				data_tx_buffer[num_data_tx] = 0xff;
-				num_data_tx++;
-				data_tx_buffer[num_data_tx] = 0xff;
-				num_data_tx++;
-				data_tx_buffer[num_data_tx] = 0x00;
-			}
-
-			change_num_param = 0;
-
-			sprintf(data_tx_buffer + num_data_tx, "page1.n0.val=%d", min_area);
-			num_data_tx = strlen(data_tx_buffer);
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			sprintf(data_tx_buffer + num_data_tx, "page1.n2.val=%f", k_1);
-			num_data_tx += strlen(data_tx_buffer + num_data_tx);
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0x00;
-			sprintf(data_tx_buffer + num_data_tx, "page1.n3.val=%f", k_2);
-			num_data_tx += strlen(data_tx_buffer + num_data_tx);
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0x00;
-			sprintf(data_tx_buffer + num_data_tx, "page1.n4.val=%d", div_12);
-			num_data_tx += strlen(data_tx_buffer + num_data_tx);
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0x00;
-		}
+		if(num_param == 1) sprintf(data_tx_buffer + num_data_tx, "page1.n0.val=%s", param_str); else sprintf(data_tx_buffer + num_data_tx, "page1.n0.val=%d", min_area);
+		add_end_command(data_tx_buffer, &num_data_tx);
+		if(num_param == 2) sprintf(data_tx_buffer + num_data_tx, "page1.n2.val=%s", param_str); else sprintf(data_tx_buffer + num_data_tx, "page1.n2.val=%f", k_1);
+		add_end_command(data_tx_buffer, &num_data_tx);
+		if(num_param == 3) sprintf(data_tx_buffer + num_data_tx, "page1.n3.val=%s", param_str); else sprintf(data_tx_buffer + num_data_tx, "page1.n3.val=%f", k_2);
+		add_end_command(data_tx_buffer, &num_data_tx);
+		if(num_param == 4) sprintf(data_tx_buffer + num_data_tx, "page1.n4.val=%s", param_str); else sprintf(data_tx_buffer + num_data_tx, "page1.n4.val=%d", div_12);
+		add_end_command(data_tx_buffer, &num_data_tx);
 
 		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 	}
