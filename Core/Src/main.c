@@ -90,7 +90,7 @@ line_object_t objects_last_line[LINE_SIZE / 2];
 
 uint16_t Objects_area[1000];
 uint32_t num_show_object_area = 0;
-uint32_t max_area = 0, midle_area = 0;
+uint32_t midle_area = 0;
 
 uint8_t PositionLCD[8];
 uint32_t pices_time[NUM_PICES_PERIOD];
@@ -173,16 +173,22 @@ uint8_t active_page = 0;
 uint8_t num_param = 0;
 char param_str[32] = {0};
 
-uint32_t min_area = 25;
-float k_1 = 1.85;
-float k_2 = 1.85;
-uint32_t div_12 = 800;
+//----------------------------------
+
+uint32_t min_area = 50;
+float k_1 = 1.5;
+float k_2 = 1.5;
+uint32_t div_12 = 500;
+uint32_t max_area = 3000;
+//----------------------------------
 
 uint8_t change_num_param = 0;
 
 void tft_show_param(void);
 void service_page_0(uint8_t but, uint8_t val);
 void service_page_1(uint8_t but, uint8_t val);
+
+
 
 /* USER CODE END PFP */
 
@@ -827,7 +833,7 @@ void service_page_0(uint8_t but, uint8_t val)
 		{
 		  if (val)
 		  {
-			  if(num_show_object_area < (numObjects + 2))
+			  if(num_show_object_area < numObjects)
 			  {
 				  num_show_object_area++;
 			  }
@@ -1330,6 +1336,96 @@ void vTask_Scanner(void *pvParameters)
 				}
 				else
 				{
+											// Common mode
+
+									// check if there are completed objects on the previous line
+
+									line_object_t * previous_p_objects_last_line = NULL;
+
+									for (j=0; j < NumObjectsInLastLine; j++)
+									{
+										if (!p_objects_last_line[j]->cont)
+										{
+											if (p_objects_last_line[j] == previous_p_objects_last_line)
+											{
+												continue;
+											}
+											else
+											{
+												previous_p_objects_last_line = p_objects_last_line[j];
+											}
+
+											if ((p_objects_last_line[j]->area > 3000) || (p_objects_last_line[j]->area < min_area))
+											{
+												p_objects_last_line[j]->area = 0;
+												continue;
+											}
+
+											numObjects_temp = numObjects;
+
+											// добавляем к счету новые объекты с их площадями
+											// если какой то объет делитнся на несколько то
+											// последняя пощадь не проверяется на минимум и засчитывпется
+
+											while (p_objects_last_line[j]->area)
+											{
+												if (p_objects_last_line[j]->area > max_area)
+												{
+													Objects_area[numObjects] = max_area;
+													p_objects_last_line[j]->area -= max_area;
+												}
+												else
+												{
+													Objects_area[numObjects] = p_objects_last_line[j]->area;
+													p_objects_last_line[j]->area = 0;
+												}
+
+												if(numObjects)
+												{
+													if (Objects_area[numObjects] == Objects_area[numObjects - 1])
+													{
+														numObjects--;
+													}
+												}
+
+												numObjects++;
+												if (numObjects == 10)
+												{
+													midle_area = 0;
+													for (i=0; i<10; i++) midle_area += Objects_area[i];
+													midle_area /=10;
+													max_area = (midle_area < div_12) ? (midle_area * k_1) : (midle_area * k_2);
+												}
+												if(numObjects > 1000)
+												{
+													numObjects = 0;
+												}
+											}
+
+											if (numObjects_temp != numObjects)
+											{
+												for (p=1; p < NUM_PICES_PERIOD; p++) pices_time[p-1] = pices_time[p];
+												pices_time[NUM_PICES_PERIOD - 1]  = HAL_GetTick();
+
+												if (numObjects > (NUM_PICES_PERIOD - 1))
+												{
+													pice_period = (pices_time[NUM_PICES_PERIOD - 1] - pices_time[0]) / NUM_PICES_PERIOD;
+													if (pice_period < MIN_PICE_PERIOD)
+													{
+														counter_num_extra_count++;
+														xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
+
+														for (p=0; p < NUM_PICES_PERIOD; p++)
+														{
+															pices_time[p] = 0;
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+				/*{
 							// Common mode
 
 					// check if there are completed objects on the previous line
@@ -1441,12 +1537,12 @@ void vTask_Scanner(void *pvParameters)
 							}
 						}
 					}
-				}
+				}*/
 
-				if(numObjects > 1000)
+				/*if(numObjects > 1000)
 				{
 					numObjects = 0;
-				}
+				}*/
 
 				xSemaphoreGive(xSemaphoreMutex_Pice_Counter);
 			}
@@ -1847,7 +1943,7 @@ void Clear_Counter (void)
 		counter_num_extra_count = 0;
 		numObjects = 0;
 		num_show_object_area = 0;
-		max_area = 0;
+		max_area = 3000;//max_area = 0;
 		midle_area = 0;
 
 		for (p=0; p < NUM_PICES_PERIOD; p++)
