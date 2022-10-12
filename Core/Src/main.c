@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -51,6 +52,8 @@
 
 #define MUX_SIZE 16
 
+#define USE_DEBUG_MODE 3
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -67,6 +70,9 @@ UART_HandleTypeDef huart3;
 
 osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
+
+__attribute__((section(".ram_d2"))) uint32_t BufferUART3_DMA_RX_1[(LINE_SIZE / 4) / 8];
+__attribute__((section(".ram_d2"))) uint32_t BufferUART3_DMA_RX_2[(LINE_SIZE / 4) / 8];
 
 __attribute__((section(".ram_d2"))) uint32_t BufferCOMP1[LINE_SIZE_WITH_DUMMY];
 uint32_t BufferCOMP2[LINE_SIZE_WITH_DUMMY];
@@ -105,7 +111,6 @@ uint32_t uart_rx_timeout = 0;
 uint8_t uart_rx_buffer[256];
 uint16_t uart_rx_buffer_pointer;
 
-#define USE_DEBUG_MODE 3
 
 /* USER CODE END PV */
 
@@ -113,7 +118,6 @@ uint16_t uart_rx_buffer_pointer;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART3_UART_Init(void);
-static void MX_USB_OTG_HS_USB_Init(void);
 static void MX_COMP1_Init(void);
 static void MX_COMP2_Init(void);
 static void MX_USART1_UART_Init(void);
@@ -127,7 +131,7 @@ xTaskHandle xTaskHandle_Scanner = NULL,
 			xTaskHandle_LCD,
 			xTaskHandle_USART_Service;
 
-/*__attribute__((section(".ITCMRAM_code")))*/ void vTask_Scanner (void *pvParameters);
+void vTask_Scanner (void *pvParameters);
 void vTask_Kyeboard (void *pvParameters);
 void vTask_ContainerDetect (void *pvParameters);
 void vTask_LCD (void *pvParameters);
@@ -188,7 +192,7 @@ void tft_show_param(void);
 void service_page_0(uint8_t but, uint8_t val);
 void service_page_1(uint8_t but, uint8_t val);
 
-
+void StartUART_3_DMA_TX(uint8_t *data, uint16_t len_data);
 
 /* USER CODE END PFP */
 
@@ -225,11 +229,10 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  //MX_USART3_UART_Init();
-  //MX_USB_OTG_HS_USB_Init();
-  MX_COMP1_Init();
-  MX_COMP2_Init();
-  //MX_USART1_UART_Init();
+ // MX_USART3_UART_Init();
+ // MX_COMP1_Init();
+ // MX_COMP2_Init();
+//  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
   RCC->AHB2ENR |= RCC_AHB2ENR_AHBSRAM1EN | RCC_AHB2ENR_AHBSRAM2EN;
@@ -525,27 +528,6 @@ static void MX_USART3_UART_Init(void)
 }
 
 /**
-  * @brief USB_OTG_HS Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USB_OTG_HS_USB_Init(void)
-{
-
-  /* USER CODE BEGIN USB_OTG_HS_Init 0 */
-
-  /* USER CODE END USB_OTG_HS_Init 0 */
-
-  /* USER CODE BEGIN USB_OTG_HS_Init 1 */
-
-  /* USER CODE END USB_OTG_HS_Init 1 */
-  /* USER CODE BEGIN USB_OTG_HS_Init 2 */
-
-  /* USER CODE END USB_OTG_HS_Init 2 */
-
-}
-
-/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -594,21 +576,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
   HAL_GPIO_Init(TIM3_CH1_LINE_ST_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : TIM3_CH2_LIGTH_Pin */
-     GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
-     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-     GPIO_InitStruct.Pull = GPIO_NOPULL;
-     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-     GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
-     HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
-
-     /*Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin */
-  	GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
-  	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  	GPIO_InitStruct.Pull = GPIO_NOPULL;
-  	HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
-  	HAL_GPIO_WritePin(TIM3_CH2_LIGHT_BLUE_GPIO_Port, TIM3_CH2_LIGHT_BLUE_Pin, 0);
-
   /*Configure GPIO pins : LD1_Pin LD3_Pin */
   GPIO_InitStruct.Pin = LD1_Pin|LD3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -621,27 +588,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USB_FS_OVCR_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : USB_FS_VBUS_Pin */
-  GPIO_InitStruct.Pin = USB_FS_VBUS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(USB_FS_VBUS_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : USB_FS_ID_Pin */
-  GPIO_InitStruct.Pin = USB_FS_ID_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF10_OTG1_HS;
-  HAL_GPIO_Init(USB_FS_ID_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : USB_FS_N_Pin USB_FS_P_Pin */
-  GPIO_InitStruct.Pin = USB_FS_N_Pin|USB_FS_P_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : TIM17_CH1_LINE_CLK_Pin */
   GPIO_InitStruct.Pin = TIM17_CH1_LINE_CLK_Pin;
@@ -657,29 +603,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : S1_Pin */
-  GPIO_InitStruct.Pin = S1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
-
-  // UART1 pin config
-
-  GPIO_InitStruct.Pin = U1_TX_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = U1_RX_Pin;
-   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-   GPIO_InitStruct.Pull = GPIO_NOPULL;
-   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-   GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
-   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 }
 
@@ -700,7 +623,7 @@ void vTask_LCD(void *pvParameters)
 
 	for(;;)
 	{
-		if (!active_page)
+		/*if (!active_page)
 		{
 			tft_show_nun_pices(numObjects);
 
@@ -773,7 +696,7 @@ void vTask_LCD(void *pvParameters)
 			tft_show_param();
 			xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Touch_Key_Poling);
 
-		}
+		}*/
 
 		vTaskDelay(100);
 	}
@@ -1336,95 +1259,95 @@ void vTask_Scanner(void *pvParameters)
 				}
 				else
 				{
-											// Common mode
+							// Common mode
 
-									// check if there are completed objects on the previous line
+					// check if there are completed objects on the previous line
 
-									line_object_t * previous_p_objects_last_line = NULL;
+					line_object_t * previous_p_objects_last_line = NULL;
 
-									for (j=0; j < NumObjectsInLastLine; j++)
+					for (j=0; j < NumObjectsInLastLine; j++)
+					{
+						if (!p_objects_last_line[j]->cont)
+						{
+							if (p_objects_last_line[j] == previous_p_objects_last_line)
+							{
+								continue;
+							}
+							else
+							{
+								previous_p_objects_last_line = p_objects_last_line[j];
+							}
+
+							if ((p_objects_last_line[j]->area > 3000) || (p_objects_last_line[j]->area < min_area))
+							{
+								p_objects_last_line[j]->area = 0;
+								continue;
+							}
+
+							numObjects_temp = numObjects;
+
+							// добавл�?ем к �?чету новые объекты �? их площад�?ми
+							// е�?ли какой то объет делитн�?�? на не�?колько то
+							// по�?ледн�?�? пощадь не провер�?ет�?�? на минимум и за�?читывпет�?�?
+
+							while (p_objects_last_line[j]->area)
+							{
+								if (p_objects_last_line[j]->area > max_area)
+								{
+									Objects_area[numObjects] = max_area;
+									p_objects_last_line[j]->area -= max_area;
+								}
+								else
+								{
+									Objects_area[numObjects] = p_objects_last_line[j]->area;
+									p_objects_last_line[j]->area = 0;
+								}
+
+								if(numObjects)
+								{
+									if (Objects_area[numObjects] == Objects_area[numObjects - 1])
 									{
-										if (!p_objects_last_line[j]->cont)
+										numObjects--;
+									}
+								}
+
+								numObjects++;
+								if (numObjects == 10)
+								{
+									midle_area = 0;
+									for (i=0; i<10; i++) midle_area += Objects_area[i];
+									midle_area /=10;
+									max_area = (midle_area < div_12) ? (midle_area * k_1) : (midle_area * k_2);
+								}
+								if(numObjects > 1000)
+								{
+									numObjects = 0;
+								}
+							}
+
+							if (numObjects_temp != numObjects)
+							{
+								for (p=1; p < NUM_PICES_PERIOD; p++) pices_time[p-1] = pices_time[p];
+								pices_time[NUM_PICES_PERIOD - 1]  = HAL_GetTick();
+
+								if (numObjects > (NUM_PICES_PERIOD - 1))
+								{
+									pice_period = (pices_time[NUM_PICES_PERIOD - 1] - pices_time[0]) / NUM_PICES_PERIOD;
+									if (pice_period < MIN_PICE_PERIOD)
+									{
+										counter_num_extra_count++;
+										xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
+
+										for (p=0; p < NUM_PICES_PERIOD; p++)
 										{
-											if (p_objects_last_line[j] == previous_p_objects_last_line)
-											{
-												continue;
-											}
-											else
-											{
-												previous_p_objects_last_line = p_objects_last_line[j];
-											}
-
-											if ((p_objects_last_line[j]->area > 3000) || (p_objects_last_line[j]->area < min_area))
-											{
-												p_objects_last_line[j]->area = 0;
-												continue;
-											}
-
-											numObjects_temp = numObjects;
-
-											// добавляем к счету новые объекты с их площадями
-											// если какой то объет делитнся на несколько то
-											// последняя пощадь не проверяется на минимум и засчитывпется
-
-											while (p_objects_last_line[j]->area)
-											{
-												if (p_objects_last_line[j]->area > max_area)
-												{
-													Objects_area[numObjects] = max_area;
-													p_objects_last_line[j]->area -= max_area;
-												}
-												else
-												{
-													Objects_area[numObjects] = p_objects_last_line[j]->area;
-													p_objects_last_line[j]->area = 0;
-												}
-
-												if(numObjects)
-												{
-													if (Objects_area[numObjects] == Objects_area[numObjects - 1])
-													{
-														numObjects--;
-													}
-												}
-
-												numObjects++;
-												if (numObjects == 10)
-												{
-													midle_area = 0;
-													for (i=0; i<10; i++) midle_area += Objects_area[i];
-													midle_area /=10;
-													max_area = (midle_area < div_12) ? (midle_area * k_1) : (midle_area * k_2);
-												}
-												if(numObjects > 1000)
-												{
-													numObjects = 0;
-												}
-											}
-
-											if (numObjects_temp != numObjects)
-											{
-												for (p=1; p < NUM_PICES_PERIOD; p++) pices_time[p-1] = pices_time[p];
-												pices_time[NUM_PICES_PERIOD - 1]  = HAL_GetTick();
-
-												if (numObjects > (NUM_PICES_PERIOD - 1))
-												{
-													pice_period = (pices_time[NUM_PICES_PERIOD - 1] - pices_time[0]) / NUM_PICES_PERIOD;
-													if (pice_period < MIN_PICE_PERIOD)
-													{
-														counter_num_extra_count++;
-														xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
-
-														for (p=0; p < NUM_PICES_PERIOD; p++)
-														{
-															pices_time[p] = 0;
-														}
-													}
-												}
-											}
+											pices_time[p] = 0;
 										}
 									}
 								}
+							}
+						}
+					}
+				}
 				/*{
 							// Common mode
 
@@ -1688,7 +1611,7 @@ void tft_show_param(void)
 
 					num_param = change_num_param;
 				}
-				else // если деактивируем поле
+				else // е�?ли деактивируем поле
 				{
 					switch(change_num_param)
 					{
@@ -1702,7 +1625,7 @@ void tft_show_param(void)
 					num_param = 0;
 				}
 			}
-			else // если небыло активно поле, то активируем
+			else // е�?ли небыло активно поле, то активируем
 			{
 				switch(change_num_param)
 				{
@@ -2021,10 +1944,35 @@ void TimersTuning(void)
  *
  */
 
+void StartUART_3_DMA_TX(uint8_t *data, uint16_t len_data)
+{
+
+	while(DMA1_Stream1->CR & DMA_SxCR_EN)
+	{
+		DMA1_Stream1->CR &= ~DMA_SxCR_EN;
+	}
+
+	DMA1->LIFCR |= (DMA_LIFCR_CTCIF1 | DMA_LIFCR_CHTIF1 | DMA_LIFCR_CTEIF1 | DMA_LIFCR_CDMEIF1 | DMA_LIFCR_CFEIF1);
+
+	DMA1_Stream1->PAR = (uint32_t)&USART3->TDR;
+	DMA1_Stream1->M0AR = data;
+	DMA1_Stream1->NDTR = len_data;
+	DMA1_Stream1->CR = DMA_SxCR_PSIZE_1 | DMA_SxCR_MSIZE_1 | DMA_SxCR_MINC | DMA_SxCR_TCIE;
+	DMAMUX1_Channel1->CCR = ( 46 << DMAMUX_CxCR_DMAREQ_ID_Pos);
+
+	USART3->ICR |= USART_ICR_TCCF;
+
+	DMA1_Stream1->CR &= ~DMA_SxCR_EN;
+}
+
 void UARTsTunning(void)
 {
-	USART1->BRR = 14583; 			//  140 MHz / 9600 bout  = 10000
+	USART1->BRR = 14583; 			//  140 MHz / 9600 bout
 	USART1->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE| USART_CR1_FIFOEN | USART_CR1_RXNEIE_RXFNEIE /*| TCIE*/;
+
+	USART3->BRR = 152; 			//  140 MHz / 921600 bout
+	USART3->CR3 = USART_CR3_DMAT;
+	USART3->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
 }
 
 /*
@@ -2167,14 +2115,28 @@ void USART1_IRQHandler(void)
   * @param  argument: Not used
   * @retval None
   */
+uint8_t test_usb_tx_buff[16];
+uint16_t test_usb_tx_buff_len = 0;
+
+extern USBD_HandleTypeDef hUsbDeviceHS;
+
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void const * argument)
 {
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
+  uint16_t i_counter = 0;
   for(;;)
   {
-    osDelay(1);
+	  if (hUsbDeviceHS.dev_state == USBD_STATE_CONFIGURED)
+	  {
+		  sprintf(test_usb_tx_buff,"Hello %u\n", i_counter++);
+		  CDC_Transmit_HS(test_usb_tx_buff, strlen(test_usb_tx_buff));
+	  }
+
+	  osDelay(1000);
   }
   /* USER CODE END 5 */
 }
