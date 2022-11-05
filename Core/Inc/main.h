@@ -125,12 +125,7 @@ void Error_Handler(void);
 #define OVER_COUNT_Pin GPIO_PIN_12
 #define OVER_COUNT_GPIO_Port GPIOB
 
-typedef struct
-{
-	uint16_t area;
-	uint8_t cont;
-	uint8_t sl;
-} line_object_t;
+
 
 #define NUM_PICES_PERIOD 8 // must equal power 2,  = 8, 16, 32, 64 ...
 #define MIN_PICE_PERIOD 30
