@@ -27,6 +27,7 @@
 
 #include "event_groups.h"
 #include "semphr.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -41,10 +42,6 @@
 /* USER CODE BEGIN PD */
 
 #define SOFT_VER 01010000
-
-#define NUM_PICES_PERIOD 8 // must equal power 2,  = 8, 16, 32, 64 ...
-#define MIN_PICE_PERIOD 30
-
 
 #define LINE_DUMMY 20
 #define LINE_SIZE 1536
@@ -76,7 +73,7 @@ osThreadId defaultTaskHandle;
 #define TRANSFER_FRAME_HEADER_SIZE 8
 
 #define PIXEL_DIVIDER 8
-#define QUEUE_NUM_LINES 10
+#define QUEUE_NUM_LINES 100
 #define LINE_DIV_LENGHT (LINE_SIZE / PIXEL_DIVIDER)
 #define LINE_TRANS_LENGHT ((LINE_DIV_LENGHT/8) + TRANSFER_FRAME_HEADER_SIZE)
 
@@ -102,10 +99,12 @@ QueueHandle_t xQueue_pLines_empty_uart = NULL;
 QueueHandle_t xQueue_RX_uart = NULL;
 QueueHandle_t xQueue_TX_uart = NULL;
 
+uint32_t global_lines_counter = 0;
 uint32_t queue_polling_lines_counter = 0;
 uint32_t queue_send_lines_counter = 0;
 uint32_t skip_lines_counter = 0;
 uint32_t skip_lines_counter_2 = 0;
+
 
 	//-----------
 /*
@@ -130,8 +129,9 @@ line_object_t *p_objects_current_line[LINE_DIV_LENGHT];
 
 uint32_t last_line[LINE_DIV_LENGHT];
 uint32_t NumObjectsInLastLine = 0;
-line_object_t *p_objects_last_line[LINE_DIV_LENGHT];
 line_object_t objects_last_line[LINE_DIV_LENGHT];
+line_object_t *p_objects_last_line[LINE_DIV_LENGHT];
+
 
 uint32_t counter_num_extra_count = 0;
 uint32_t numObjects = 0;
@@ -153,7 +153,7 @@ uint8_t num_data_tx = 0;
 
 uint32_t uart_rx_timeout = 0;
 uint8_t uart_rx_buffer[256];
-uint16_t uart_rx_buffer_pointer;
+uint16_t uart_rx_buffer_pointer=0;
 
 
 /* USER CODE END PV */
@@ -220,6 +220,8 @@ const EventBits_t Flag_Counter_Not_Visible =    	0x00000200;
 const EventBits_t Flag_Touch_Key_Poling		 =    	0x00000400;
 const EventBits_t Flag_USB_LINE_TX_Complete	=		0x00000800;
 const EventBits_t Flag_UART_LINE_TX_Complete = 		0x00001000;
+const EventBits_t Flag_UART_TX_Ready =		 		0x00002000;
+const EventBits_t Flag_Reset_lines_counters =	 	0x00004000;
 
 SemaphoreHandle_t xSemaphoreMutex_Pice_Counter;
 
@@ -230,11 +232,11 @@ char param_str[32] = {0};
 
 //----------------------------------
 
-uint32_t min_area = 25;
-float k_1 = 1.5;
-float k_2 = 1.5;
-uint32_t div_12 = 250;
-uint32_t max_area = 3000;
+uint32_t min_area = 10;
+float k_1 = 2.0;
+float k_2 = 2.0;
+uint32_t div_12 = 200;
+uint32_t max_area = 1500;
 //----------------------------------
 
 uint8_t change_num_param = 0;
@@ -248,6 +250,8 @@ extern USBD_HandleTypeDef hUsbDeviceHS;
 uint8_t * p_pixel_parsel = NULL;
 uint8_t temp_pixel_parsel[LINE_TRANS_LENGHT];
 uint32_t pixel_parsel_counter = 0;
+
+uint32_t start_time =0;
 
 /* USER CODE END PFP */
 
@@ -264,7 +268,7 @@ int main(void)
 {
   /* USER CODE BEGIN 1 */
 
-	uint8_t *p_line = NULL;
+	void *p_line = NULL;
 
   /* USER CODE END 1 */
 
@@ -304,6 +308,7 @@ int main(void)
   UARTsTunning();
   ComparatorsTuning();
   TimersTuning();
+
   DMATuning();
   SystemInterruptsTuning();
 
@@ -336,6 +341,8 @@ int main(void)
   // create event grup
 
   xEventGroup_StatusFlags = xEventGroupCreate();
+
+  xEventGroupSetBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
 
   // create semaphores
 
@@ -372,6 +379,18 @@ int main(void)
 
   xQueue_RX_uart = xQueueCreate( 256, sizeof(uint8_t) );
   xQueue_TX_uart = xQueueCreate( 256, sizeof(uint8_t) );
+
+
+  // vars zero
+
+  memset(last_line, 0, sizeof(last_line));
+  memset(objects_current_line, 0, sizeof(objects_current_line));
+
+  memset(current_line, 0, sizeof(current_line));
+  memset(objects_last_line, 0, sizeof(objects_last_line));
+
+  memset(data_tx_buffer, 0, sizeof(data_tx_buffer));
+  memset(uart_rx_buffer, 0, sizeof(uart_rx_buffer));
 
   // create tasks
 
@@ -769,9 +788,7 @@ void vTask_LCD(void *pvParameters)
 		{
 			tft_show_nun_pices(numObjects);
 
-#ifdef USE_DEBUG_MODE
 			tft_show_area_pices(num_show_object_area);
-#endif
 
 			if (timer_over_count_signal_display)
 			{
@@ -1054,7 +1071,7 @@ void vTask_Kyeboard(void *pvParameters)
 
 	for(;;)
 	{
-	/*	xQueueReceive(xQueue_RX_uart, &byte, portMAX_DELAY);
+		/*xQueueReceive(xQueue_RX_uart, &byte, portMAX_DELAY);
 
 		if (!uart_rx_buffer_pointer)
 		{
@@ -1102,29 +1119,27 @@ void vTask_Kyeboard(void *pvParameters)
 			uart_rx_buffer_pointer++;
 		}*/
 
-		 if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_UART_RX_Buffer_Busy)
-			  {
-				  if (uart_rx_buffer_pointer == 7)
-				  {
-					  if (uart_rx_buffer[0] == 0x65)
-					  {
-						  if (uart_rx_buffer[1] == 0x00)
-						  {
-							  service_page_0(uart_rx_buffer[2], uart_rx_buffer[3]);
-						  }
-						  else if (uart_rx_buffer[1] == 0x01)
-						  {
-							  service_page_1(uart_rx_buffer[2], uart_rx_buffer[3]);
-						  }
-					  }
-				  }
+	xEventGroupWaitBits(xEventGroup_StatusFlags, Flag_UART_RX_Buffer_Busy, pdFALSE, pdFALSE, portMAX_DELAY );
 
-				  uart_rx_buffer_pointer = 0;
+	if (uart_rx_buffer_pointer == 7)
+	{
+	  if (uart_rx_buffer[0] == 0x65)
+	  {
+		  if (uart_rx_buffer[1] == 0x00)
+		  {
+			  service_page_0(uart_rx_buffer[2], uart_rx_buffer[3]);
+		  }
+		  else if (uart_rx_buffer[1] == 0x01)
+		  {
+			  service_page_1(uart_rx_buffer[2], uart_rx_buffer[3]);
+		  }
+	  }
+	}
 
-				  xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_RX_Buffer_Busy);
-			  }
+	uart_rx_buffer_pointer = 0;
 
-			  osDelay(100);
+	xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_RX_Buffer_Busy);
+
 	}
 }
 
@@ -1224,14 +1239,6 @@ void vTask_Scanner(void *pvParameters)
 	{
 		xQueueReceive(xQueue_pLines_busy, &p_line, portMAX_DELAY);
 
-	/*	pixel_frame_counter++;
-				if (xTaskGetTickCount() >= 60000)
-				{
-					pixel_frame_counter = 0;
-				}
-				xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Scanner_Busy);
-				continue;*/
-
 		HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
 
 		if (xQueueReceive(xQueue_pLines_empty_usb, &p_pixel_parsel, 0) != pdTRUE)
@@ -1239,7 +1246,7 @@ void vTask_Scanner(void *pvParameters)
 			p_pixel_parsel = temp_pixel_parsel;
 		}
 
-		if (!active_page)
+		if ((!active_page) && (xTaskGetTickCount() > 1000))
 		{
 			NumObjectsInCurrentLine = 0;
 			lastbit = 0;
@@ -1248,7 +1255,7 @@ void vTask_Scanner(void *pvParameters)
 
 			for (j = 0; j < LINE_DIV_LENGHT; j++)
 			{
-				if(*(p_line + j) & COMP_SR_C1VAL)
+				if((*(p_line + j) & COMP_SR_C1VAL) || (j < 8))
 				{
 					current_line[j] = 0;
 					lastbit = 0;
@@ -1318,7 +1325,7 @@ void vTask_Scanner(void *pvParameters)
 						previous_p_objects_last_line = p_objects_last_line[j];
 					}
 
-					if ((p_objects_last_line[j]->area > 3000) || (p_objects_last_line[j]->area < min_area))
+					if ((p_objects_last_line[j]->area > 1500) || (p_objects_last_line[j]->area < min_area))
 					{
 						p_objects_last_line[j]->area = 0;
 						continue;
@@ -1326,22 +1333,18 @@ void vTask_Scanner(void *pvParameters)
 
 					numObjects_temp = numObjects;
 
-					// добавл�?ем к �?чету новые объекты �? их площад�?ми
-					// е�?ли какой то объет делитн�?�? на не�?колько то
-					// по�?ледн�?�? пощадь не провер�?ет�?�? на минимум и за�?читывпет�?�?
-
 					while (p_objects_last_line[j]->area)
 					{
-						/*if (p_objects_last_line[j]->area > max_area)
+						if (p_objects_last_line[j]->area > max_area)
 						{
 							Objects_area[numObjects] = max_area;
 							p_objects_last_line[j]->area -= max_area;
 						}
 						else
-						{*/
+						{
 							Objects_area[numObjects] = p_objects_last_line[j]->area;
 							p_objects_last_line[j]->area = 0;
-						//}
+						}
 
 						/*if(numObjects)
 						{
@@ -1352,6 +1355,7 @@ void vTask_Scanner(void *pvParameters)
 						}*/
 
 						numObjects++;
+
 						if (numObjects == 10)
 						{
 							midle_area = 0;
@@ -1359,15 +1363,21 @@ void vTask_Scanner(void *pvParameters)
 							midle_area /=10;
 							max_area = (midle_area < div_12) ? (midle_area * k_1) : (midle_area * k_2);
 						}
+
 						if(numObjects > 1000)
 						{
 							numObjects = 0;
 						}
 					}
 
+#ifdef OVER_RATE_ENABLE
 					if (numObjects_temp != numObjects)
 					{
-						for (p=1; p < NUM_PICES_PERIOD; p++) pices_time[p-1] = pices_time[p];
+						for (p=1; p < NUM_PICES_PERIOD; p++)
+						{
+							pices_time[p-1] = pices_time[p];
+						}
+
 						pices_time[NUM_PICES_PERIOD - 1]  = HAL_GetTick();
 
 						if (numObjects > (NUM_PICES_PERIOD - 1))
@@ -1385,6 +1395,7 @@ void vTask_Scanner(void *pvParameters)
 							}
 						}
 					}
+#endif // OVER_RATE_ENABLE
 				}
 			}
 
@@ -1417,11 +1428,6 @@ void vTask_Scanner(void *pvParameters)
 		}
 
 		pixel_parsel_counter++;
-
-	/*	if (xTaskGetTickCount() >= 30000)
-		{
-			TIM3->CR1 &= ~TIM_CR1_CEN;
-		}*/
   }
 
 }
@@ -1505,7 +1511,6 @@ void vTask_USB_Line_TX(void *pvParameters)
 
 		xQueueSend(xQueue_pLines_empty_usb, &p_line_usb, 0);
 
-
 	}
 }
 
@@ -1525,7 +1530,6 @@ void vTask_USART_Service (void *pvParameters)
 
 		if(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_RX)
 		{
-
 			xEventGroupClearBits(xEventGroup_StatusFlags, Flag_USART_RX);
 		}
 
@@ -1560,6 +1564,7 @@ void vTask_USART_Service (void *pvParameters)
 				vTaskDelay(1);
 			}*/
 
+			//xEventGroupSetBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
 
 			xEventGroupClearBits(xEventGroup_StatusFlags, Flag_USART_TX);
 		}
@@ -1589,6 +1594,9 @@ void add_end_command(uint8_t * data, uint8_t * init_index)
 
 void tft_show_param(void)
 {
+	//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
+	//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
+
 	uint32_t protect_counter = HAL_GetTick();
 
 	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
@@ -1598,6 +1606,7 @@ void tft_show_param(void)
 
 	if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
 	{
+
 		num_data_tx =0;
 
 		if ((change_num_param > 0) && (change_num_param < 5))
@@ -1668,6 +1677,7 @@ void tft_show_param(void)
 
 		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 	}
+
 }
 
 /*
@@ -1685,6 +1695,9 @@ void tft_show_clear_mode(uint8_t on_off)
 
 void tft_show_overcount(uint16_t state)
 {
+	//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
+	//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
+
 	uint32_t protect_counter = HAL_GetTick();
 
 	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
@@ -1713,8 +1726,14 @@ void tft_show_overcount(uint16_t state)
 		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 	}
 
+
 	if(state)
 	{
+		//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
+		//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
+
+		uint32_t protect_counter = HAL_GetTick();
+
 		while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
 		{
 			vTaskDelay(10);
@@ -1734,7 +1753,6 @@ void tft_show_overcount(uint16_t state)
 			data_tx_buffer[num_data_tx] = 0x00;
 			xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 		}
-
 	}
 }
 
@@ -1744,6 +1762,9 @@ void tft_show_overcount(uint16_t state)
 
 void tft_show_hide_counter(uint16_t state)
 {
+	//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
+	//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
+
 	uint32_t protect_counter = HAL_GetTick();
 
 	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
@@ -1781,6 +1802,9 @@ void tft_show_hide_counter(uint16_t state)
 
 void tft_show_nun_pices(uint16_t num_pices)
 {
+	//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
+	//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
+
 	uint32_t protect_counter = HAL_GetTick();
 
 	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
@@ -1801,10 +1825,14 @@ void tft_show_nun_pices(uint16_t num_pices)
 		data_tx_buffer[num_data_tx] = 0x00;
 		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 	}
+
 }
 
 void tft_show_area_pices(uint16_t num_pice)
 {
+	//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
+	//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
+
 	uint32_t protect_counter = HAL_GetTick();
 
 	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
@@ -1856,7 +1884,6 @@ void tft_show_area_pices(uint16_t num_pice)
 		data_tx_buffer[num_data_tx] = 0xff;
 		num_data_tx++;
 		data_tx_buffer[num_data_tx] = 0x00;
-
 		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 	}
 }
@@ -1873,7 +1900,9 @@ void Clear_Counter (void)
 
  	if (xSemaphoreTake(xSemaphoreMutex_Pice_Counter, 10) == pdTRUE)
 	{
-		counter_num_extra_count = 0;
+ 		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Reset_lines_counters);
+
+ 		counter_num_extra_count = 0;
 		numObjects = 0;
 		num_show_object_area = 0;
 		max_area = 3000;//max_area = 0;
@@ -1910,6 +1939,9 @@ void Clear_Counter (void)
 			vTaskDelay(10);
 		}
 
+		//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
+		//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
+
 		if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
 		{
 			sprintf(data_tx_buffer, "page0.bt1.val=0");
@@ -1934,7 +1966,7 @@ void Clear_Counter (void)
 void TimersTuning(void)
 {
     TIM3->PSC = 279;
-    TIM3->ARR = 800;
+    TIM3->ARR = 400;
     TIM3->CCR1 = 50;
     TIM3->CCR2 = 60;
     TIM3->CCMR1 = TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC2M_1 | TIM_CCMR1_OC2M_2 | TIM_CCMR1_OC1FE | TIM_CCMR1_OC2FE;
@@ -1957,7 +1989,7 @@ void TimersTuning(void)
 void UARTsTunning(void)
 {
 	USART1->BRR = 14583; 			//  140 MHz / 9600 bout
-	USART1->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE| USART_CR1_FIFOEN | USART_CR1_RXNEIE_RXFNEIE /*|  USART_CR1_TXFNFIE*/ /*| TCIE*/;
+	USART1->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE|/* USART_CR1_FIFOEN |*/ USART_CR1_RXNEIE_RXFNEIE /*|  USART_CR1_TXFNFIE*/ /*| TCIE*/;
 
 	USART3->BRR = 152; 			//  140 MHz / 921600 bout
 	USART3->CR3 = USART_CR3_DMAT;
@@ -2029,6 +2061,7 @@ void TIM3_IRQHandler(void)
 void DMA1_Stream0_IRQHandler(void)
 {
     BaseType_t xHigherPriorityTaskWoken, xResult;
+    uint32_t r = 0, k = 0;
 
     DMA1->LIFCR |= DMA_LIFCR_CTCIF0 | DMA_LIFCR_CHTIF0;
 
@@ -2057,6 +2090,50 @@ void DMA1_Stream0_IRQHandler(void)
     }*/
 
     uint32_t *p_line = NULL;
+
+    if (!start_time)
+    {
+    	start_time = xTaskGetTickCount();
+    }
+
+    if (xEventGroupGetBitsFromISR(xEventGroup_StatusFlags) & Flag_Reset_lines_counters)
+    {
+    	xEventGroupClearBitsFromISR(xEventGroup_StatusFlags, Flag_Reset_lines_counters);
+
+    	global_lines_counter = 0;
+    	queue_polling_lines_counter = 0;
+    	queue_send_lines_counter = 0;
+		skip_lines_counter_2 = 0;
+		skip_lines_counter = 0;
+    }
+
+ /*   global_lines_counter++;
+
+    if (xQueueReceiveFromISR(xQueue_pLines_empty_usb, &p_pixel_parsel, &xHigherPriorityTaskWoken) == pdTRUE)
+	{
+    	k = 0; r = 8;
+
+		for (uint32_t y=LINE_DUMMY, z=0; y < (LINE_SIZE + LINE_DUMMY); y += PIXEL_DIVIDER, z +=1)
+		{
+			*(p_line + z) = BufferCOMP1[y];
+
+			if(BufferCOMP1[y] & COMP_SR_C1VAL)
+			{
+				*(p_pixel_parsel + r) &= ~( 1 << k++);
+			}
+			else
+			{
+				*(p_pixel_parsel + r) |= ( 1 << k++);
+			}
+
+			if(k == 8) {k = 0; r++;}
+		}
+
+		*(uint32_t*)p_pixel_parsel = 0xAAAAAAAA;
+		*(uint32_t*)(p_pixel_parsel + 4) = global_lines_counter;
+
+		xQueueSendFromISR(xQueue_pLines_busy_usb, &p_line, &xHigherPriorityTaskWoken);
+	}*/
 
 	if (xQueueReceiveFromISR(xQueue_pLines_empty, &p_line, &xHigherPriorityTaskWoken) == pdTRUE)
 	{
@@ -2111,8 +2188,7 @@ void USART1_IRQHandler(void)
 	BaseType_t xHigherPriorityTaskWoken= pdFALSE;
 	uint8_t rx_byte = 0;
 
-
-/*	while(USART1->ISR & USART_ISR_RXNE_RXFNE)
+	/*while(USART1->ISR & USART_ISR_RXNE_RXFNE)
 	{
 		rx_byte = USART1->RDR;
 
@@ -2122,45 +2198,44 @@ void USART1_IRQHandler(void)
 	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);*/
 
 	if (USART1->ISR & USART_ISR_RXNE_RXFNE)
+	{
+		if (!(xEventGroupGetBitsFromISR(xEventGroup_StatusFlags) & Flag_UART_RX_Buffer_Busy))
 		{
-			if (!(xEventGroupGetBitsFromISR(xEventGroup_StatusFlags) & Flag_UART_RX_Buffer_Busy))
+			if (!uart_rx_timeout)
 			{
-				if (!uart_rx_timeout)
-				{
-					uart_rx_timeout = 1;
-					uart_rx_buffer_pointer = 0;
-				}
-
-				while(USART1->ISR & USART_ISR_RXNE_RXFNE)
-				{
-					uart_rx_buffer[uart_rx_buffer_pointer] = USART1->RDR;
-
-					if (uart_rx_buffer[uart_rx_buffer_pointer] == 0xff)
-					{
-						uart_rx_timeout++;
-					}
-
-					if (uart_rx_buffer_pointer < sizeof(uart_rx_buffer))
-					{
-						uart_rx_buffer_pointer++;
-					}
-				}
-
-				if (uart_rx_timeout >= 4)
-				{
-					uart_rx_timeout = 0;
-					xEventGroupSetBitsFromISR(xEventGroup_StatusFlags, Flag_UART_RX_Buffer_Busy, &xHigherPriorityTaskWoken);
-				}
+				uart_rx_timeout = 1;
+				uart_rx_buffer_pointer = 0;
 			}
-			else
+
+			while(USART1->ISR & USART_ISR_RXNE_RXFNE)
 			{
-				while(USART1->ISR & USART_ISR_RXNE_RXFNE)
+				uart_rx_buffer[uart_rx_buffer_pointer] = USART1->RDR;
+
+				if (uart_rx_buffer[uart_rx_buffer_pointer] == 0xff)
 				{
-					rx_byte = USART1->RDR;
+					uart_rx_timeout++;
+				}
+
+				if (uart_rx_buffer_pointer < sizeof(uart_rx_buffer))
+				{
+					uart_rx_buffer_pointer++;
 				}
 			}
 
+			if (uart_rx_timeout >= 4)
+			{
+				uart_rx_timeout = 0;
+				xEventGroupSetBitsFromISR(xEventGroup_StatusFlags, Flag_UART_RX_Buffer_Busy, &xHigherPriorityTaskWoken);
+			}
 		}
+		else
+		{
+			while(USART1->ISR & USART_ISR_RXNE_RXFNE)
+			{
+				rx_byte = USART1->RDR;
+			}
+		}
+	}
 }
 
 /* USER CODE END 4 */
@@ -2179,7 +2254,7 @@ void StartDefaultTask(void const * argument)
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
- // uint16_t i_counter = 0;
+
   for(;;)
   {
 	  osDelay(1000);

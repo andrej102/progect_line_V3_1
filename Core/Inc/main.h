@@ -125,10 +125,14 @@ void Error_Handler(void);
 #define OVER_COUNT_Pin GPIO_PIN_12
 #define OVER_COUNT_GPIO_Port GPIOB
 
+//-----------------------------
 
+#define OVER_RATE_ENABLE 1
 
-#define NUM_PICES_PERIOD 8 // must equal power 2,  = 8, 16, 32, 64 ...
-#define MIN_PICE_PERIOD 30
+#define NUM_PICES_PERIOD 4 // must equal power 2,  = 4, 8, 16, 32, 64 ...
+#define MIN_PICE_PERIOD 10
+
+//-----------------------------------------
 
 #define TRANSPARENT_OBJECT_OVERTIME 80
 #define TRANSPARENT_OBJECT_CURRENT_LINE_OVERTIME 20
