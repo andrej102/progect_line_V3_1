@@ -233,10 +233,11 @@ char param_str[32] = {0};
 //----------------------------------
 
 uint32_t min_area = 10;
-float k_1 = 2.0;
-float k_2 = 2.0;
+float k_1 = 2.5; // for small
+float k_2 = 1.7; // for big
 uint32_t div_12 = 200;
 uint32_t max_area = 1500;
+
 //----------------------------------
 
 uint8_t change_num_param = 0;
@@ -396,7 +397,7 @@ int main(void)
 
     xTaskCreate(vTask_Scanner,(char*)"Task Scanner", 1024, NULL, tskIDLE_PRIORITY + 5, &xTaskHandle_Scanner);
     xTaskCreate(vTask_Kyeboard,(char*)"Task Keyboard", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_Keyboard);
- //   xTaskCreate(vTask_ContainerDetect,(char*)"Task Container Detect", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_ContainerDetect);
+    xTaskCreate(vTask_ContainerDetect,(char*)"Task Container Detect", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_ContainerDetect);
     xTaskCreate(vTask_LCD,(char*)"Task LCD", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_LCD);
     xTaskCreate(vTask_USART_Service,(char*)"USART Service", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_USART_Service);
 
@@ -749,6 +750,13 @@ static void MX_GPIO_Init(void)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
+    /*Configure GPIO pins : CONTAINER_DETECT_Pin */
+       GPIO_InitStruct.Pin = CONTAINER_DETECT_Pin;
+       GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+       GPIO_InitStruct.Pull = GPIO_PULLUP;
+       GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+       HAL_GPIO_Init(CONTAINER_DETECT_GPIO_Port, &GPIO_InitStruct);
+
     // UART1 pin config
 
     GPIO_InitStruct.Pin = U1_TX_Pin;
@@ -781,6 +789,8 @@ void vTask_LCD(void *pvParameters)
 	static uint32_t timer_counter_flashing_display = 0;
 
 	vTaskDelay(2000);
+
+	vTaskDelay(1000);
 
 	for(;;)
 	{
@@ -1154,11 +1164,6 @@ void vTask_ContainerDetect(void *pvParameters)
 	/* Infinite loop */
   for(;;)
   {
-	 /* if (COMP12->SR & COMP_SR_C2VAL)
-	  {
-
-	  }
-
 	  if (HAL_GPIO_ReadPin(CONTAINER_DETECT_GPIO_Port, CONTAINER_DETECT_Pin))
 	  {
 		  if(previous_state)
@@ -1196,25 +1201,7 @@ void vTask_ContainerDetect(void *pvParameters)
 		  previous_state = 0;
 	  }
 
-	 // Over count service
-
-	  if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Over_Count)
-	  	  {
-	  		  xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Over_Count);
-	  		  timer_over_count_signal = 5;
-	  		  OVER_COUNT_GPIO_Port->BSRR |=  OVER_COUNT_Pin; // Set OVER CURRENT
-	  	  }
-
-	  	  if (timer_over_count_signal)
-	  	  {
-	  		  timer_over_count_signal--;
-	  		  if (!timer_over_count_signal)
-	  		  {
-	  			  OVER_COUNT_GPIO_Port->BSRR |=  (OVER_COUNT_Pin << 16); // Clear OVER CURRENT
-	  		  }
-	  	  }*/
-
-	  osDelay(100);
+	  osDelay(500);
   }
 
 }
@@ -1337,8 +1324,20 @@ void vTask_Scanner(void *pvParameters)
 					{
 						if (p_objects_last_line[j]->area > max_area)
 						{
-							Objects_area[numObjects] = max_area;
-							p_objects_last_line[j]->area -= max_area;
+							//if (midle_area >= div_12)
+							//{
+
+#ifndef OVER_RATE_ENABLE
+								xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
+#endif //OVER_RATE_ENABLE
+								Objects_area[numObjects] = max_area;
+								p_objects_last_line[j]->area -= max_area;
+							//}
+							//else
+							//{
+							//	Objects_area[numObjects] = p_objects_last_line[j]->area;
+							//	p_objects_last_line[j]->area = 0;
+							//}
 						}
 						else
 						{
@@ -1356,12 +1355,13 @@ void vTask_Scanner(void *pvParameters)
 
 						numObjects++;
 
-						if (numObjects == 10)
+						if (numObjects == NUM_PICES_FOR_EXECUTE_MIDLE)
 						{
 							midle_area = 0;
-							for (i=0; i<10; i++) midle_area += Objects_area[i];
-							midle_area /=10;
+							for (i=0; i < NUM_PICES_FOR_EXECUTE_MIDLE; i++) midle_area += Objects_area[i];
+							midle_area /= NUM_PICES_FOR_EXECUTE_MIDLE;
 							max_area = (midle_area < div_12) ? (midle_area * k_1) : (midle_area * k_2);
+							min_area = (midle_area*15)/100;
 						}
 
 						if(numObjects > 1000)
@@ -1370,8 +1370,8 @@ void vTask_Scanner(void *pvParameters)
 						}
 					}
 
-#ifdef OVER_RATE_ENABLE
-					if (numObjects_temp != numObjects)
+//#ifdef OVER_RATE_ENABLE
+					if ((numObjects_temp != numObjects) && (midle_area < div_12) && numObjects > NUM_PICES_FOR_EXECUTE_MIDLE)
 					{
 						for (p=1; p < NUM_PICES_PERIOD; p++)
 						{
@@ -1395,7 +1395,7 @@ void vTask_Scanner(void *pvParameters)
 							}
 						}
 					}
-#endif // OVER_RATE_ENABLE
+//#endif // OVER_RATE_ENABLE
 				}
 			}
 

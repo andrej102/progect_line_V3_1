@@ -127,7 +127,9 @@ void Error_Handler(void);
 
 //-----------------------------
 
-#define OVER_RATE_ENABLE 1
+#define NUM_PICES_FOR_EXECUTE_MIDLE 10
+
+//#define OVER_RATE_ENABLE 1
 
 #define NUM_PICES_PERIOD 4 // must equal power 2,  = 4, 8, 16, 32, 64 ...
 #define MIN_PICE_PERIOD 10
