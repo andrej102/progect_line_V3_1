@@ -169,18 +169,20 @@ void StartDefaultTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
-xTaskHandle xTaskHandle_Scanner = NULL,
-			xTaskHandle_Keyboard = NULL,
-			xTaskHandle_ContainerDetect,
-			xTaskHandle_LCD,
-			xTaskHandle_USART_Service,
-			xTaskHandle_UART_Line_TX,
-			xTaskHandle_USB_Line_TX;
+xTaskHandle xTaskHandle_Scanner = NULL;
+xTaskHandle xTaskHandle_TouchScreen = NULL;
+xTaskHandle xTaskHandle_ContainerDetect = NULL;
+xTaskHandle xTaskHandle_Display = NULL;
+xTaskHandle xTaskHandle_USART_Service = NULL;
+xTaskHandle xTaskHandle_UART_Line_TX = NULL;
+xTaskHandle xTaskHandle_USB_Line_TX = NULL;
+xTaskHandle xTaskHandle_Main = NULL;
 
+void vTask_Main (void *pvParameters);
 void vTask_Scanner (void *pvParameters);
-void vTask_Kyeboard (void *pvParameters);
+void vTask_TouchScreen (void *pvParameters);
 void vTask_ContainerDetect (void *pvParameters);
-void vTask_LCD (void *pvParameters);
+void vTask_Display (void *pvParameters);
 void vTask_USART_Service (void *pvParameters);
 void vTask_UART_Line_TX (void *pvParameters);
 void vTask_USB_Line_TX (void *pvParameters);
@@ -191,11 +193,11 @@ void TimersTuning(void);
 void SystemInterruptsTuning(void);
 void DMATuning(void);
 
+void StartScaner(void);
+void StopScaner(void);
 void Clear_Counter (void);
 
-void ShowTextOnLCD (const char *text);
-void ShowNumberOnLCD (uint32_t number, uint16_t num_areas);
-
+void tft_show_message(uint8_t msg);
 void tft_show_nun_pices(uint16_t num_pices);
 void tft_show_area_pices(uint16_t num_pice);
 void tft_show_area_boundaries(void);
@@ -222,6 +224,13 @@ const EventBits_t Flag_USB_LINE_TX_Complete	=		0x00000800;
 const EventBits_t Flag_UART_LINE_TX_Complete = 		0x00001000;
 const EventBits_t Flag_UART_TX_Ready =		 		0x00002000;
 const EventBits_t Flag_Reset_lines_counters =	 	0x00004000;
+const EventBits_t Flag_Activity_Detect =	 		0x00008000;
+const EventBits_t Flag_Idle_State =	 				0x00010000;
+const EventBits_t Flag_Idle_Event = 				0x00020000;
+const EventBits_t Flag_Scaner_State =				0x00040000;
+const EventBits_t Flag_Scaner_Event =				0x00080000;
+const EventBits_t Flag_Protect_State =				0x00100000;
+const EventBits_t Flag_Protect_Event =				0x00200000;
 
 SemaphoreHandle_t xSemaphoreMutex_Pice_Counter;
 
@@ -395,20 +404,17 @@ int main(void)
 
   // create tasks
 
-    xTaskCreate(vTask_Scanner,(char*)"Task Scanner", 1024, NULL, tskIDLE_PRIORITY + 5, &xTaskHandle_Scanner);
-    xTaskCreate(vTask_Kyeboard,(char*)"Task Keyboard", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_Keyboard);
-    xTaskCreate(vTask_ContainerDetect,(char*)"Task Container Detect", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_ContainerDetect);
-    xTaskCreate(vTask_LCD,(char*)"Task LCD", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_LCD);
-    xTaskCreate(vTask_USART_Service,(char*)"USART Service", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_USART_Service);
+  xTaskCreate(vTask_Main,(char*)"Task Main", 1024, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_Main);
+  xTaskCreate(vTask_Scanner,(char*)"Task Scanner", 1024, NULL, tskIDLE_PRIORITY + 5, &xTaskHandle_Scanner);
+  xTaskCreate(vTask_TouchScreen,(char*)"Task TouchScreen", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_TouchScreen);
+  xTaskCreate(vTask_ContainerDetect,(char*)"Task Container Detect", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_ContainerDetect);
+  xTaskCreate(vTask_Display,(char*)"Task Display", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_Display);
+  xTaskCreate(vTask_USART_Service,(char*)"USART Service", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_USART_Service);
 
     //xTaskCreate(vTask_UART_Line_TX,(char*)"UART Line TX", 512, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_UART_Line_TX);
-    xTaskCreate(vTask_USB_Line_TX,(char*)"USB Line TX", 512, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_USB_Line_TX);
+  xTaskCreate(vTask_USB_Line_TX,(char*)"USB Line TX", 512, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_USB_Line_TX);
 
-
-
-
-    TIM17->CR1 |= TIM_CR1_CEN;
-    TIM3->CR1 |= TIM_CR1_CEN;
+  StartScaner();
 
   /* USER CODE END RTOS_THREADS */
 
@@ -781,7 +787,62 @@ static void MX_GPIO_Init(void)
  *
  */
 
-void vTask_LCD(void *pvParameters)
+void vTask_Main(void *pvParameters)
+{
+	uint32_t idle_timer=0;
+	uint32_t previousTickCount = xTaskGetTickCount();
+
+	while(1)
+	{
+		// check activity flag
+
+		if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Activity_Detect)
+		{
+			xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Activity_Detect | Flag_Idle_State | Flag_Protect_State);
+
+			previousTickCount = xTaskGetTickCount();
+
+			idle_timer = 0;
+
+			if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Scaner_State))
+			{
+				  memset(last_line, 0, sizeof(last_line));
+				  memset(objects_current_line, 0, sizeof(objects_current_line));
+
+				  memset(current_line, 0, sizeof(current_line));
+				  memset(objects_last_line, 0, sizeof(objects_last_line));
+
+				Clear_Counter();
+
+				StartScaner();
+				xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Scaner_State | Flag_Scaner_Event);
+			}
+		}
+		else if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Protect_State))
+		{
+			if ((xTaskGetTickCount() - previousTickCount) >= 1000)
+			{
+				previousTickCount = xTaskGetTickCount();
+				idle_timer++;
+			}
+
+			if ((idle_timer >= 60) && (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_State)))
+			{
+				xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Scaner_State);
+				StopScaner();
+				xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Idle_State | Flag_Idle_Event);
+			}
+		}
+
+		vTaskDelay(1000);
+	}
+}
+
+/*
+ *
+ */
+
+void vTask_Display(void *pvParameters)
 {
   /* Infinite loop */
 
@@ -790,65 +851,84 @@ void vTask_LCD(void *pvParameters)
 
 	vTaskDelay(2000);
 
-	vTaskDelay(1000);
-
 	for(;;)
 	{
 		if (!active_page)
 		{
-			tft_show_nun_pices(numObjects);
-
-			tft_show_area_pices(num_show_object_area);
-
-			if (timer_over_count_signal_display)
+			if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Scaner_Event)
 			{
-				timer_over_count_signal_display--;
-				if (!timer_over_count_signal_display)
-				{
-					tft_show_overcount(0);
-				}
+				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Scaner_Event);
+				tft_show_message(0); // Active
 			}
-
-			if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Over_Count_Display)
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_Event)
 			{
-				xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Over_Count_Display);
-
-				if (!timer_over_count_signal_display)
-				{
-					tft_show_overcount(1);
-				}
-
-				timer_over_count_signal_display = 5;
+				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Idle_Event);
+				tft_show_message(1); // Idle
 			}
-
-			//------
-
-			if (timer_counter_flashing_display)
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Protect_Event)
 			{
-				timer_counter_flashing_display--;
-			}
-
-			if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Container_Removed)
-			{
-				if (!timer_counter_flashing_display)
-				{
-					if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Counter_Not_Visible)
-					{
-						tft_show_hide_counter(1);
-					}
-					else
-					{
-						tft_show_hide_counter(0);
-					}
-
-					timer_counter_flashing_display = 5;
-				}
+				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Protect_Event);
+				tft_show_message(2); // Protect
 			}
 			else
 			{
-				if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Counter_Not_Visible)
+
+				tft_show_nun_pices(numObjects);
+
+				tft_show_area_pices(num_show_object_area);
+
+				if (timer_over_count_signal_display)
 				{
-					tft_show_hide_counter(1);
+					timer_over_count_signal_display--;
+					if (!timer_over_count_signal_display)
+					{
+						tft_show_overcount(0);
+					}
+				}
+
+				if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Over_Count_Display)
+				{
+					xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Over_Count_Display);
+
+					if (!timer_over_count_signal_display)
+					{
+						tft_show_overcount(1);
+					}
+
+					timer_over_count_signal_display = 5;
+				}
+
+				//------
+				if ( (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Protect_State)) && (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_State)))
+				{
+					if (timer_counter_flashing_display)
+					{
+						timer_counter_flashing_display--;
+					}
+
+					if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Container_Removed)
+					{
+						if (!timer_counter_flashing_display)
+						{
+							if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Counter_Not_Visible)
+							{
+								tft_show_hide_counter(1);
+							}
+							else
+							{
+								tft_show_hide_counter(0);
+							}
+
+							timer_counter_flashing_display = 5;
+						}
+					}
+					else
+					{
+						if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Counter_Not_Visible)
+						{
+							tft_show_hide_counter(1);
+						}
+					}
 				}
 			}
 		}
@@ -1074,7 +1154,7 @@ void service_page_1(uint8_t but, uint8_t val)
  *
  */
 
-void vTask_Kyeboard(void *pvParameters)
+void vTask_TouchScreen(void *pvParameters)
 {
 	uint8_t byte = 0;
 	uint8_t end_parsel_finder =0;
@@ -1174,6 +1254,8 @@ void vTask_ContainerDetect(void *pvParameters)
 				  event_state = 1;
 
 				  Clear_Counter();
+
+				  xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Activity_Detect);
 			  }
 		  }
 		  else
@@ -1190,6 +1272,9 @@ void vTask_ContainerDetect(void *pvParameters)
 			  if(!event_state)
 			  {
 				  xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Container_Removed);
+
+				//  StopScaner();
+
 				  event_state = 1;
 			  }
 		  }
@@ -1312,12 +1397,22 @@ void vTask_Scanner(void *pvParameters)
 						previous_p_objects_last_line = p_objects_last_line[j];
 					}
 
-					if ((p_objects_last_line[j]->area > 1500) || (p_objects_last_line[j]->area < min_area))
+					// check over area
+					if (p_objects_last_line[j]->area > 1500)
 					{
+						StopScaner();
+						xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Scaner_State);
+						xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Protect_State |  Flag_Protect_Event);
 						p_objects_last_line[j]->area = 0;
 						continue;
 					}
 
+					// check under area
+					if (p_objects_last_line[j]->area < min_area)
+					{
+						p_objects_last_line[j]->area = 0;
+						continue;
+					}
 					numObjects_temp = numObjects;
 
 					while (p_objects_last_line[j]->area)
@@ -1354,6 +1449,8 @@ void vTask_Scanner(void *pvParameters)
 						}*/
 
 						numObjects++;
+
+						xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Activity_Detect);
 
 						if (numObjects == NUM_PICES_FOR_EXECUTE_MIDLE)
 						{
@@ -1586,6 +1683,46 @@ void add_end_command(uint8_t * data, uint8_t * init_index)
 	index +=3;
 
 	*init_index = index;
+}
+
+
+/*
+ *
+ */
+
+void tft_show_message(uint8_t msg)
+{
+	uint32_t protect_counter = HAL_GetTick();
+
+	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
+	{
+		vTaskDelay(10);
+	}
+
+	if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
+	{
+		switch(msg)
+		{
+			case 0 :
+				sprintf(data_tx_buffer, "page0.n0.pco=0");
+				break;
+
+			case 1 :
+			case 2:
+				sprintf(data_tx_buffer, "page0.n0.pco=65520");
+				break;
+		}
+
+		num_data_tx = strlen(data_tx_buffer);
+		data_tx_buffer[num_data_tx] = 0xff;
+		num_data_tx++;
+		data_tx_buffer[num_data_tx] = 0xff;
+		num_data_tx++;
+		data_tx_buffer[num_data_tx] = 0xff;
+		num_data_tx++;
+		data_tx_buffer[num_data_tx] = 0x00;
+		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
+	}
 }
 
 /*
@@ -1891,6 +2028,30 @@ void tft_show_area_pices(uint16_t num_pice)
 
 /*
  * *************** General Purpose Functions ***************
+ */
+
+/*
+ *
+ */
+
+void StartScaner(void)
+{
+	TIM17->CR1 |= TIM_CR1_CEN;
+	TIM3->CR1 |= TIM_CR1_CEN;
+}
+
+/*
+ *
+ */
+
+void StopScaner(void)
+{
+	TIM3->CR1 &= ~TIM_CR1_CEN;
+	TIM17->CR1 &= ~TIM_CR1_CEN;
+}
+
+/*
+ *
  */
 
 void Clear_Counter (void)
