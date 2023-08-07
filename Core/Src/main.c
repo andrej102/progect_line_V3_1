@@ -105,6 +105,7 @@ uint32_t queue_send_lines_counter = 0;
 uint32_t skip_lines_counter = 0;
 uint32_t skip_lines_counter_2 = 0;
 
+uint32_t clean_test_lines_buffer[LINE_DIV_LENGHT];
 
 	//-----------
 /*
@@ -200,10 +201,9 @@ void Clear_Counter (void);
 void tft_show_message(uint8_t msg);
 void tft_show_nun_pices(uint16_t num_pices);
 void tft_show_area_pices(uint16_t num_pice);
-void tft_show_area_boundaries(void);
-void tft_show_clear_mode(uint8_t on_off);
 void tft_show_overcount(uint16_t state);
 void tft_show_hide_counter(uint16_t state);
+void tft_show_page(uint8_t page_num);
 
 void Delay_us(uint32_t us);
 
@@ -231,6 +231,20 @@ const EventBits_t Flag_Scaner_State =				0x00040000;
 const EventBits_t Flag_Scaner_Event =				0x00080000;
 const EventBits_t Flag_Protect_State =				0x00100000;
 const EventBits_t Flag_Protect_Event =				0x00200000;
+const EventBits_t Flag_Scaner_Dirty			 =		0x00400000;
+const EventBits_t Flag_Scaner_Dirty_Event	 =		0x00800000;
+
+EventGroupHandle_t xEventGroup_StatusFlags_2;
+
+const EventBits_t Flag_Need_Stop_Scaner	 =			0x00000001;
+const EventBits_t Flag_Envent_Mode = 				0x00000002;
+const EventBits_t Flag_Envent_Mode_Press =			0x00000004;
+const EventBits_t Flag_Envent_Mode_Unpress =		0x00000008;
+
+EventGroupHandle_t xEventGroup_ChangeScreenFlags;
+
+const EventBits_t Flag_Show_Screen_0	 =			0x00000001;
+const EventBits_t Flag_Show_Screen_1 = 				0x00000002;
 
 SemaphoreHandle_t xSemaphoreMutex_Pice_Counter;
 
@@ -241,8 +255,12 @@ char param_str[32] = {0};
 
 //----------------------------------
 
+#define PROTECT_SERVICE_ENABLE 1
+#define OVER_AREA 1500			// max area
+#define IDLE_STATE_TIMEOUT 1000  // seconds
+
 uint32_t min_area = 10;
-float k_1 = 2.5; // for small
+float k_1 = 3.0; // for small
 float k_2 = 1.7; // for big
 uint32_t div_12 = 200;
 uint32_t max_area = 1500;
@@ -262,6 +280,15 @@ uint8_t temp_pixel_parsel[LINE_TRANS_LENGHT];
 uint32_t pixel_parsel_counter = 0;
 
 uint32_t start_time =0;
+
+#define INIT_DUMMY_SCAN_COUNTER_VALUE 		100
+#define INIT_CLEAR_TEST_SCAN_COUNTER_VALUE 	100
+
+uint32_t dummy_scan_counter = INIT_DUMMY_SCAN_COUNTER_VALUE;
+uint32_t clean_test_scan_counter = INIT_CLEAR_TEST_SCAN_COUNTER_VALUE;
+
+#define TOUCH_PERIOD 3000
+#define NUM_TOUCH_FOR_SWITCH_PAGE 3
 
 /* USER CODE END PFP */
 
@@ -351,6 +378,8 @@ int main(void)
   // create event grup
 
   xEventGroup_StatusFlags = xEventGroupCreate();
+  xEventGroup_StatusFlags_2 = xEventGroupCreate();
+  xEventGroup_ChangeScreenFlags = xEventGroupCreate();
 
   xEventGroupSetBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
 
@@ -402,17 +431,19 @@ int main(void)
   memset(data_tx_buffer, 0, sizeof(data_tx_buffer));
   memset(uart_rx_buffer, 0, sizeof(uart_rx_buffer));
 
+  active_page = 0;
+
   // create tasks
 
   xTaskCreate(vTask_Main,(char*)"Task Main", 1024, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_Main);
   xTaskCreate(vTask_Scanner,(char*)"Task Scanner", 1024, NULL, tskIDLE_PRIORITY + 5, &xTaskHandle_Scanner);
-  xTaskCreate(vTask_TouchScreen,(char*)"Task TouchScreen", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_TouchScreen);
-  xTaskCreate(vTask_ContainerDetect,(char*)"Task Container Detect", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_ContainerDetect);
-  xTaskCreate(vTask_Display,(char*)"Task Display", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_Display);
-  xTaskCreate(vTask_USART_Service,(char*)"USART Service", 512, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_USART_Service);
+  xTaskCreate(vTask_TouchScreen,(char*)"Task TouchScreen", 1024, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_TouchScreen);
+  xTaskCreate(vTask_ContainerDetect,(char*)"Task Container Detect", 1024, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_ContainerDetect);
+  xTaskCreate(vTask_Display,(char*)"Task Display", 1024, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_Display);
+  xTaskCreate(vTask_USART_Service,(char*)"USART Service", 1024, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_USART_Service);
 
     //xTaskCreate(vTask_UART_Line_TX,(char*)"UART Line TX", 512, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_UART_Line_TX);
-  xTaskCreate(vTask_USB_Line_TX,(char*)"USB Line TX", 512, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_USB_Line_TX);
+  xTaskCreate(vTask_USB_Line_TX,(char*)"USB Line TX", 1024, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_USB_Line_TX);
 
   StartScaner();
 
@@ -798,7 +829,7 @@ void vTask_Main(void *pvParameters)
 
 		if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Activity_Detect)
 		{
-			xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Activity_Detect | Flag_Idle_State | Flag_Protect_State);
+			xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Activity_Detect | Flag_Idle_State | Flag_Protect_State | Flag_Scaner_Dirty);
 
 			previousTickCount = xTaskGetTickCount();
 
@@ -806,11 +837,11 @@ void vTask_Main(void *pvParameters)
 
 			if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Scaner_State))
 			{
-				  memset(last_line, 0, sizeof(last_line));
-				  memset(objects_current_line, 0, sizeof(objects_current_line));
+				memset(last_line, 0, sizeof(last_line));
+				memset(objects_current_line, 0, sizeof(objects_current_line));
 
-				  memset(current_line, 0, sizeof(current_line));
-				  memset(objects_last_line, 0, sizeof(objects_last_line));
+				memset(current_line, 0, sizeof(current_line));
+				memset(objects_last_line, 0, sizeof(objects_last_line));
 
 				Clear_Counter();
 
@@ -826,9 +857,8 @@ void vTask_Main(void *pvParameters)
 				idle_timer++;
 			}
 
-			if ((idle_timer >= 60) && (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_State)))
+			if ((idle_timer >= IDLE_STATE_TIMEOUT) && (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_State)))
 			{
-				xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Scaner_State);
 				StopScaner();
 				xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Idle_State | Flag_Idle_Event);
 			}
@@ -855,7 +885,27 @@ void vTask_Display(void *pvParameters)
 	{
 		if (!active_page)
 		{
-			if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Scaner_Event)
+			if (xEventGroupGetBits(xEventGroup_ChangeScreenFlags) & Flag_Show_Screen_1)
+			{
+				xEventGroupClearBits(xEventGroup_ChangeScreenFlags, Flag_Show_Screen_1);
+				tft_show_page(1);
+			}
+			else if (xEventGroupGetBits(xEventGroup_ChangeScreenFlags) & Flag_Show_Screen_0)
+			{
+				xEventGroupClearBits(xEventGroup_ChangeScreenFlags, Flag_Show_Screen_0);
+				tft_show_page(0);
+			}
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Envent_Mode_Press)
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Press);
+				tft_show_message(4); //
+			}
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Envent_Mode_Unpress)
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Unpress);
+				tft_show_message(5); //
+			}
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Scaner_Event)
 			{
 				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Scaner_Event);
 				tft_show_message(0); // Active
@@ -869,6 +919,113 @@ void vTask_Display(void *pvParameters)
 			{
 				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Protect_Event);
 				tft_show_message(2); // Protect
+			}
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Scaner_Dirty_Event)
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Scaner_Dirty_Event);
+				tft_show_message(3); // Not Clear
+			}
+			else
+			{
+
+				tft_show_nun_pices(numObjects);
+
+				if (timer_over_count_signal_display)
+				{
+					timer_over_count_signal_display--;
+					if (!timer_over_count_signal_display)
+					{
+						tft_show_overcount(0);
+					}
+				}
+
+				if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Over_Count_Display)
+				{
+					xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Over_Count_Display);
+
+					if (!timer_over_count_signal_display)
+					{
+						tft_show_overcount(1);
+					}
+
+					timer_over_count_signal_display = 5;
+				}
+
+				//------
+				if ( (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Protect_State)) && (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_State)))
+				{
+					if (timer_counter_flashing_display)
+					{
+						timer_counter_flashing_display--;
+					}
+
+					if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Container_Removed)
+					{
+						if (!timer_counter_flashing_display)
+						{
+							if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Counter_Not_Visible)
+							{
+								tft_show_hide_counter(1);
+							}
+							else
+							{
+								tft_show_hide_counter(0);
+							}
+
+							timer_counter_flashing_display = 5;
+						}
+					}
+					else
+					{
+						if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Counter_Not_Visible)
+						{
+							tft_show_hide_counter(1);
+						}
+					}
+				}
+			}
+		}
+		else if (active_page == 1)
+		{
+			if (xEventGroupGetBits(xEventGroup_ChangeScreenFlags) & Flag_Show_Screen_1)
+			{
+				xEventGroupClearBits(xEventGroup_ChangeScreenFlags, Flag_Show_Screen_1);
+				tft_show_page(1);
+			}
+			else if (xEventGroupGetBits(xEventGroup_ChangeScreenFlags) & Flag_Show_Screen_0)
+			{
+				xEventGroupClearBits(xEventGroup_ChangeScreenFlags, Flag_Show_Screen_0);
+				tft_show_page(0);
+			}
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Envent_Mode_Press)
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Press);
+				tft_show_message(4); //
+			}
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Envent_Mode_Unpress)
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Unpress);
+				tft_show_message(5); //
+			}
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Scaner_Event)
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Scaner_Event);
+				tft_show_message(0); // Active
+			}
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_Event)
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Idle_Event);
+				tft_show_message(1); // Idle
+			}
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Protect_Event)
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Protect_Event);
+				tft_show_message(2); // Protect
+			}
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Scaner_Dirty_Event)
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Scaner_Dirty_Event);
+				tft_show_message(3); // Not Clear
 			}
 			else
 			{
@@ -932,18 +1089,6 @@ void vTask_Display(void *pvParameters)
 				}
 			}
 		}
-		else
-		{
-			while(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Touch_Key_Poling)
-			{
-				vTaskDelay(2);
-			}
-
-			xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Touch_Key_Poling);
-			tft_show_param();
-			xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Touch_Key_Poling);
-
-		}
 
 		vTaskDelay(100);
 	}
@@ -954,52 +1099,40 @@ void vTask_Display(void *pvParameters)
  *
  */
 
-void service_page_0(uint8_t but, uint8_t val)
+void service_page_1(uint8_t but, uint8_t val)
 {
 	GPIO_InitTypeDef GPIO_InitStruct = {0};
 
+	static uint32_t last_time_touch = 0;
+	static uint8_t touch_counter = 0;
+
 	switch(but)
 	{
-		case 16 :
+		case 15 :
 		{
 			if (val)
 			{
-				active_page = 1;
-				num_param = 0;
-				param_str[0] = 0;
-				change_num_param = 0;
+				if ((HAL_GetTick() - last_time_touch) > TOUCH_PERIOD)
+				{
+					touch_counter = 1;
+				}
+				else
+				{
+					touch_counter++;
+					if (touch_counter == NUM_TOUCH_FOR_SWITCH_PAGE)
+					{
+						touch_counter = 0;
+						xEventGroupSetBits(xEventGroup_ChangeScreenFlags, Flag_Show_Screen_0);
+					}
+				}
+
+				last_time_touch = HAL_GetTick();
 			}
 
 			break;
 		}
 
-		case 2 :
-		{
-		  if (val)
-		  {
-			  Clear_Counter();
-		  }
-
-		  break;
-		}
-
-		case 5 :
-		{
-		  if (val)
-		  {
-			  xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Mode_Transparent);
-			  Clear_Counter();
-		  }
-		  else if (!val)
-		  {
-			  xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Mode_Transparent);
-			  Clear_Counter();
-		  }
-
-		  break;
-		}
-
-		case 4 :
+		case 3 :
 		{
 		  if (val)
 		  {
@@ -1016,7 +1149,7 @@ void service_page_0(uint8_t but, uint8_t val)
 		  break;
 		}
 
-		case 3 :
+		case 2 :
 		{
 		  if (val)
 		  {
@@ -1029,7 +1162,21 @@ void service_page_0(uint8_t but, uint8_t val)
 		  break;
 		}
 
-		case 0x14 :
+		case 16 :
+		{
+			if (val)
+			{
+				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode);
+			}
+			else
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode);
+			}
+
+			break;
+		}
+
+		case 12 :
 		{
 		  if (val)
 		  {
@@ -1081,68 +1228,103 @@ void service_page_0(uint8_t but, uint8_t val)
  *
  */
 
-void service_page_1(uint8_t but, uint8_t val)
+void service_page_0(uint8_t but, uint8_t val)
 {
-	uint32_t len =0;
+	GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-	len = strlen(param_str);
-
-	if (num_param)
-	{
-		switch(but)
-		{
-			case 4 : if (val) if (len) {param_str[len] = '0'; param_str[len+1] = 0;} break;
-			case 5 : if (val) param_str[len] = '1'; param_str[len+1] = 0; break;
-			case 12 : if (val) param_str[len] = '2'; param_str[len+1] = 0; break;
-			case 13 : if (val) param_str[len] = '3'; param_str[len+1] = 0; break;
-			case 14 : if (val) param_str[len] = '4'; param_str[len+1] = 0; break;
-			case 15 : if (val) param_str[len] = '5'; param_str[len+1] = 0; break;
-			case 16 : if (val) param_str[len] = '6'; param_str[len+1] = 0; break;
-			case 17 : if (val) param_str[len] = '7'; param_str[len+1] = 0; break;
-			case 18 : if (val) param_str[len] = '8'; param_str[len+1] = 0; break;
-			case 19 : if (val) param_str[len] = '9'; param_str[len+1] = 0; break;
-			case 21 :
-				if (val)
-				{
-					if(len > 1)
-					{
-						param_str[len-1] = 0;
-					}
-					else if(len == 1)
-					{
-						param_str[len-1] = '0';
-					}
-				}
-				break;
-			case 20 : if (val) param_str[len] = '.'; param_str[len+1] = 0; break;
-
-			default : break;
-		}
-	}
+	static uint32_t last_time_touch = 0;
+	static uint8_t touch_counter = 0;
 
 	switch(but)
 	{
-		case 1 : if (val) active_page = 1; break;
-		case 2 : if (val) sprintf(param_str,"%u", min_area); change_num_param = 1; break;
-		case 3 : if (val) sprintf(param_str,"%f", k_1); change_num_param = 2; break;
-		case 6 : if (val) sprintf(param_str,"%f", k_2); change_num_param = 3; break;
-		case 7 : if (val) sprintf(param_str,"%u", div_12); change_num_param = 4; break;
-		case 22 :
+		case 4 :
+		{
+			  if (val)
+			  {
+				xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Mode_Blue);
+
+				//Configure GPIO pin : TIM3_CH2_LIGTH_Pin
+				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
+				GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+				GPIO_InitStruct.Pull = GPIO_NOPULL;
+				HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
+				HAL_GPIO_WritePin(TIM3_CH2_LIGHT_GPIO_Port, TIM3_CH2_LIGHT_Pin, 0);
+
+				 //Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin
+				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
+				GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+				GPIO_InitStruct.Pull = GPIO_NOPULL;
+				GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+				GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
+				HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
+			  }
+			  else if (!val)
+			  {
+				//Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin
+				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
+				GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+				GPIO_InitStruct.Pull = GPIO_NOPULL;
+				HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
+				HAL_GPIO_WritePin(TIM3_CH2_LIGHT_BLUE_GPIO_Port, TIM3_CH2_LIGHT_BLUE_Pin, 0);
+
+				 //Configure GPIO pin : TIM3_CH2_LIGTH_Pin
+				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
+				GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+				GPIO_InitStruct.Pull = GPIO_NOPULL;
+				GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+				GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
+				HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
+
+				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Mode_Blue);
+			 }
+
+			 break;
+		}
+
+		case 5 :
+		{
 			if (val)
 			{
-				switch(num_param)
+				if ((HAL_GetTick() - last_time_touch) > TOUCH_PERIOD)
 				{
-					case 1 : min_area = atoi(param_str); change_num_param = 1; break;
-					case 2 : k_1 = atof(param_str); change_num_param = 2; break;
-					case 3 : k_2 = atof(param_str); change_num_param = 3; break;
-					case 4 : div_12 = atoi(param_str); change_num_param = 4; break;
-					default : break;
+					touch_counter = 1;
 				}
-			}
-			break;
+				else
+				{
+					touch_counter++;
+					if (touch_counter == NUM_TOUCH_FOR_SWITCH_PAGE)
+					{
+						touch_counter = 0;
+						xEventGroupSetBits(xEventGroup_ChangeScreenFlags, Flag_Show_Screen_1);
+					}
+				}
 
-			default : break;
+				last_time_touch = HAL_GetTick();
+			}
+
+			break;
 		}
+
+		case 6 :
+		{
+			if (val)
+			{
+				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Unpress);
+				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Press);
+			}
+			else
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Press);
+				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Unpress);
+			}
+
+			break;
+		}
+
+		default : break;
+	}
 
 }
 
@@ -1150,46 +1332,16 @@ void service_page_1(uint8_t but, uint8_t val)
  *
  */
 
-/*
- *
- */
 
 void vTask_TouchScreen(void *pvParameters)
 {
-	uint8_t byte = 0;
-	uint8_t end_parsel_finder =0;
 
 	for(;;)
 	{
-		/*xQueueReceive(xQueue_RX_uart, &byte, portMAX_DELAY);
+		xEventGroupWaitBits(xEventGroup_StatusFlags, Flag_UART_RX_Buffer_Busy, pdFALSE, pdFALSE, portMAX_DELAY );
 
-		if (!uart_rx_buffer_pointer)
+		if (uart_rx_buffer_pointer == 7)
 		{
-			uart_rx_timeout = xTaskGetTickCount();
-		}
-
-		if((xTaskGetTickCount() - uart_rx_timeout) > 100)
-		{
-			uart_rx_buffer_pointer = 0;
-		}
-
-		uart_rx_buffer[uart_rx_buffer_pointer] = byte;
-
-		if (uart_rx_buffer[uart_rx_buffer_pointer] == 0xff)
-		{
-			end_parsel_finder++;
-		}
-		else
-		{
-			end_parsel_finder = 0;
-		}
-
-		if (end_parsel_finder == 3)
-		{
-			end_parsel_finder = 0;
-
-			if (uart_rx_buffer_pointer >= 7)
-			{
 			  if (uart_rx_buffer[0] == 0x65)
 			  {
 				  if (uart_rx_buffer[1] == 0x00)
@@ -1201,34 +1353,25 @@ void vTask_TouchScreen(void *pvParameters)
 					  service_page_1(uart_rx_buffer[2], uart_rx_buffer[3]);
 				  }
 			  }
-			}
-			uart_rx_buffer_pointer = 0;
 		}
-		else
+		else if (uart_rx_buffer_pointer == 5)
 		{
-			uart_rx_buffer_pointer++;
-		}*/
+			  if (uart_rx_buffer[0] == 0x66)
+			  {
+				  if (uart_rx_buffer[1] == 0x00)
+				  {
+					  active_page = 0;
+				  }
+				  else if (uart_rx_buffer[1] == 0x01)
+				  {
+					  active_page = 1;
+				  }
+			  }
+		}
 
-	xEventGroupWaitBits(xEventGroup_StatusFlags, Flag_UART_RX_Buffer_Busy, pdFALSE, pdFALSE, portMAX_DELAY );
+		uart_rx_buffer_pointer = 0;
 
-	if (uart_rx_buffer_pointer == 7)
-	{
-	  if (uart_rx_buffer[0] == 0x65)
-	  {
-		  if (uart_rx_buffer[1] == 0x00)
-		  {
-			  service_page_0(uart_rx_buffer[2], uart_rx_buffer[3]);
-		  }
-		  else if (uart_rx_buffer[1] == 0x01)
-		  {
-			  service_page_1(uart_rx_buffer[2], uart_rx_buffer[3]);
-		  }
-	  }
-	}
-
-	uart_rx_buffer_pointer = 0;
-
-	xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_RX_Buffer_Busy);
+		xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_RX_Buffer_Busy);
 
 	}
 }
@@ -1253,7 +1396,10 @@ void vTask_ContainerDetect(void *pvParameters)
 				  xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Container_Removed);
 				  event_state = 1;
 
-				  Clear_Counter();
+				  if (!(xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Envent_Mode))
+				  {
+					  Clear_Counter();
+				  }
 
 				  xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Activity_Detect);
 			  }
@@ -1306,6 +1452,8 @@ void vTask_Scanner(void *pvParameters)
 	uint32_t r = 0, k = 0;
 	uint32_t *p_line = NULL;
 
+	uint32_t clear_tester = 0;
+
 	/* Infinite loop */
 	for(;;)
 	{
@@ -1318,196 +1466,269 @@ void vTask_Scanner(void *pvParameters)
 			p_pixel_parsel = temp_pixel_parsel;
 		}
 
-		if ((!active_page) && (xTaskGetTickCount() > 1000))
+		if(dummy_scan_counter) // dummy scans for normal start line
 		{
-			NumObjectsInCurrentLine = 0;
-			lastbit = 0;
+			if(dummy_scan_counter == INIT_DUMMY_SCAN_COUNTER_VALUE)
+			{
+				memset((uint8_t*)last_line, 0, sizeof(last_line));
+			}
+
+			dummy_scan_counter--;
 
 			k = 0; r = 8;
 
 			for (j = 0; j < LINE_DIV_LENGHT; j++)
 			{
-				if((*(p_line + j) & COMP_SR_C1VAL) || (j < 8))
+				*(p_pixel_parsel + r) &= ~( 1 << k++);
+
+				if(k == 8)
 				{
-					current_line[j] = 0;
-					lastbit = 0;
-
-					*(p_pixel_parsel + r) &= ~( 1 << k++);
+					k = 0;
+					r++;
 				}
-				else
-				{
-					*(p_pixel_parsel + r) |= ( 1 << k++);
-
-					if(!lastbit)
-					{
-						NumObjectsInCurrentLine++;
-						p_objects_current_line[NumObjectsInCurrentLine-1] = &objects_current_line[NumObjectsInCurrentLine-1];
-						p_objects_current_line[NumObjectsInCurrentLine-1]->area = 0;
-					}
-
-					current_line[j] = NumObjectsInCurrentLine;
-					p_objects_current_line[NumObjectsInCurrentLine-1]->area++;
-					lastbit = 1;
-
-					if(last_line[j])
-					{
-						p_objects_last_line[last_line[j]-1]->cont = 1;
-
-						if (!p_objects_last_line[last_line[j]-1]->sl)
-						{
-							p_objects_last_line[last_line[j]-1]->sl = current_line[j];
-							p_objects_current_line[current_line[j]-1]->area += p_objects_last_line[last_line[j]-1]->area;
-						}
-						else
-						{
-							if (p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl - 1] != p_objects_current_line[current_line[j]-1])
-							{
-								p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl-1]->area += p_objects_current_line[current_line[j]-1]->area;
-								p_objects_current_line[current_line[j]-1] = p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl - 1];
-							}
-						}
-					}
-				}
-
-				// we analyze the connectivity of the objects of the current line with the objects of the previous line
-				// and arrange the corresponding signs (connectivity and continuation)
-
-				if(k == 8) {k = 0; r++;}
-
-				last_line[j] = current_line[j];
 			}
-
-
-					// Common mode
-
-			// check if there are completed objects on the previous line
-
-			line_object_t * previous_p_objects_last_line = NULL;
-
-			for (j=0; j < NumObjectsInLastLine; j++)
+		}
+		else // active dummy scans
+		{
+			if(clean_test_scan_counter)
 			{
-				if (!p_objects_last_line[j]->cont)
+				if(clean_test_scan_counter == INIT_CLEAR_TEST_SCAN_COUNTER_VALUE) //initial zeros clean line test
 				{
-					if (p_objects_last_line[j] == previous_p_objects_last_line)
+					memset((uint8_t*)clean_test_lines_buffer, 0, sizeof(clean_test_lines_buffer));
+					memset((uint8_t*)last_line, 0, sizeof(last_line));
+				}
+
+				clean_test_scan_counter--;
+
+				clear_tester = 0;
+
+				for (j = 0; j < LINE_DIV_LENGHT; j++)
+				{
+					if((*(p_line + j) & COMP_SR_C1VAL) || (j < 8))
 					{
-						continue;
+						*(p_pixel_parsel + r) &= ~( 1 << k++);
 					}
 					else
 					{
-						previous_p_objects_last_line = p_objects_last_line[j];
+						*(p_pixel_parsel + r) |= ( 1 << k++);
+
+						clean_test_lines_buffer[j]++;
 					}
 
-					// check over area
-					if (p_objects_last_line[j]->area > 1500)
+					if(k == 8)
 					{
-						StopScaner();
-						xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Scaner_State);
-						xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Protect_State |  Flag_Protect_Event);
-						p_objects_last_line[j]->area = 0;
-						continue;
+						k = 0;
+						r++;
 					}
 
-					// check under area
-					if (p_objects_last_line[j]->area < min_area)
-					{
-						p_objects_last_line[j]->area = 0;
-						continue;
-					}
-					numObjects_temp = numObjects;
+					clear_tester += clean_test_lines_buffer[j];
 
-					while (p_objects_last_line[j]->area)
+					if(!clean_test_scan_counter)
 					{
-						if (p_objects_last_line[j]->area > max_area)
+						if (clear_tester)
 						{
-							//if (midle_area >= div_12)
-							//{
-
-#ifndef OVER_RATE_ENABLE
-								xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
-#endif //OVER_RATE_ENABLE
-								Objects_area[numObjects] = max_area;
-								p_objects_last_line[j]->area -= max_area;
-							//}
-							//else
-							//{
-							//	Objects_area[numObjects] = p_objects_last_line[j]->area;
-							//	p_objects_last_line[j]->area = 0;
-							//}
+							StopScaner();
+							xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Scaner_Dirty | Flag_Scaner_Dirty_Event);
 						}
 						else
 						{
-							Objects_area[numObjects] = p_objects_last_line[j]->area;
-							p_objects_last_line[j]->area = 0;
-						}
-
-						/*if(numObjects)
-						{
-							if (Objects_area[numObjects] == Objects_area[numObjects - 1])
-							{
-								numObjects--;
-							}
-						}*/
-
-						numObjects++;
-
-						xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Activity_Detect);
-
-						if (numObjects == NUM_PICES_FOR_EXECUTE_MIDLE)
-						{
-							midle_area = 0;
-							for (i=0; i < NUM_PICES_FOR_EXECUTE_MIDLE; i++) midle_area += Objects_area[i];
-							midle_area /= NUM_PICES_FOR_EXECUTE_MIDLE;
-							max_area = (midle_area < div_12) ? (midle_area * k_1) : (midle_area * k_2);
-							min_area = (midle_area*15)/100;
-						}
-
-						if(numObjects > 1000)
-						{
-							numObjects = 0;
+							COMP1->CFGR &= ~COMP_CFGRx_INMSEL_0;
 						}
 					}
+				}
+			}
+			else
+			{
+				NumObjectsInCurrentLine = 0;
+				lastbit = 0;
 
-//#ifdef OVER_RATE_ENABLE
-					if ((numObjects_temp != numObjects) && (midle_area < div_12) && numObjects > NUM_PICES_FOR_EXECUTE_MIDLE)
+				k = 0; r = 8;
+
+				for (j = 0; j < LINE_DIV_LENGHT; j++)
+				{
+					if((*(p_line + j) & COMP_SR_C1VAL) || (j < 8))
 					{
-						for (p=1; p < NUM_PICES_PERIOD; p++)
+						current_line[j] = 0;
+						lastbit = 0;
+
+						*(p_pixel_parsel + r) &= ~( 1 << k++);
+					}
+					else
+					{
+						*(p_pixel_parsel + r) |= ( 1 << k++);
+
+						if(!lastbit)
 						{
-							pices_time[p-1] = pices_time[p];
+							NumObjectsInCurrentLine++;
+							p_objects_current_line[NumObjectsInCurrentLine-1] = &objects_current_line[NumObjectsInCurrentLine-1];
+							p_objects_current_line[NumObjectsInCurrentLine-1]->area = 0;
 						}
 
-						pices_time[NUM_PICES_PERIOD - 1]  = HAL_GetTick();
+						current_line[j] = NumObjectsInCurrentLine;
+						p_objects_current_line[NumObjectsInCurrentLine-1]->area++;
+						lastbit = 1;
 
-						if (numObjects > (NUM_PICES_PERIOD - 1))
+						if(last_line[j])
 						{
-							pice_period = (pices_time[NUM_PICES_PERIOD - 1] - pices_time[0]) / NUM_PICES_PERIOD;
-							if (pice_period < MIN_PICE_PERIOD)
-							{
-								counter_num_extra_count++;
-								xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
+							p_objects_last_line[last_line[j]-1]->cont = 1;
 
-								for (p=0; p < NUM_PICES_PERIOD; p++)
+							if (!p_objects_last_line[last_line[j]-1]->sl)
+							{
+								p_objects_last_line[last_line[j]-1]->sl = current_line[j];
+								p_objects_current_line[current_line[j]-1]->area += p_objects_last_line[last_line[j]-1]->area;
+							}
+							else
+							{
+								if (p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl - 1] != p_objects_current_line[current_line[j]-1])
 								{
-									pices_time[p] = 0;
+									p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl-1]->area += p_objects_current_line[current_line[j]-1]->area;
+									p_objects_current_line[current_line[j]-1] = p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl - 1];
 								}
 							}
 						}
 					}
-//#endif // OVER_RATE_ENABLE
+
+					// we analyze the connectivity of the objects of the current line with the objects of the previous line
+					// and arrange the corresponding signs (connectivity and continuation)
+
+					if(k == 8) {k = 0; r++;}
+
+					last_line[j] = current_line[j];
 				}
+
+
+						// Common mode
+
+				// check if there are completed objects on the previous line
+
+				line_object_t * previous_p_objects_last_line = NULL;
+
+				for (j=0; j < NumObjectsInLastLine; j++)
+				{
+					if (!p_objects_last_line[j]->cont)
+					{
+						if (p_objects_last_line[j] == previous_p_objects_last_line)
+						{
+							continue;
+						}
+						else
+						{
+							previous_p_objects_last_line = p_objects_last_line[j];
+						}
+
+						// check over area
+						if (p_objects_last_line[j]->area > OVER_AREA)
+						{
+#ifdef PROTECT_SERVICE_ENABLE
+							StopScaner();
+							xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Protect_State |  Flag_Protect_Event);
+#endif // PROTECT_SERVICE_ENABLE
+							p_objects_last_line[j]->area = 0;
+							continue;
+						}
+
+						// check under area
+						if (p_objects_last_line[j]->area < min_area)
+						{
+							p_objects_last_line[j]->area = 0;
+							continue;
+						}
+						numObjects_temp = numObjects;
+
+						while (p_objects_last_line[j]->area)
+						{
+							if (p_objects_last_line[j]->area > max_area)
+							{
+								//if (midle_area >= div_12)
+								//{
+
+	#ifndef OVER_RATE_ENABLE
+									xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
+	#endif //OVER_RATE_ENABLE
+									Objects_area[numObjects] = max_area;
+									p_objects_last_line[j]->area -= max_area;
+								//}
+								//else
+								//{
+								//	Objects_area[numObjects] = p_objects_last_line[j]->area;
+								//	p_objects_last_line[j]->area = 0;
+								//}
+							}
+							else
+							{
+								Objects_area[numObjects] = p_objects_last_line[j]->area;
+								p_objects_last_line[j]->area = 0;
+							}
+
+							/*if(numObjects)
+							{
+								if (Objects_area[numObjects] == Objects_area[numObjects - 1])
+								{
+									numObjects--;
+								}
+							}*/
+
+							numObjects++;
+
+							xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Activity_Detect);
+
+							if (numObjects == NUM_PICES_FOR_EXECUTE_MIDLE)
+							{
+								midle_area = 0;
+								for (i=0; i < NUM_PICES_FOR_EXECUTE_MIDLE; i++) midle_area += Objects_area[i];
+								midle_area /= NUM_PICES_FOR_EXECUTE_MIDLE;
+								max_area = (midle_area < div_12) ? (midle_area * k_1) : (midle_area * k_2);
+								min_area = (midle_area*15)/100;
+							}
+
+							if(numObjects > 1000)
+							{
+								numObjects = 0;
+							}
+						}
+
+	//#ifdef OVER_RATE_ENABLE
+						if ((numObjects_temp != numObjects) && (midle_area < div_12) && numObjects > NUM_PICES_FOR_EXECUTE_MIDLE)
+						{
+							for (p=1; p < NUM_PICES_PERIOD; p++)
+							{
+								pices_time[p-1] = pices_time[p];
+							}
+
+							pices_time[NUM_PICES_PERIOD - 1]  = HAL_GetTick();
+
+							if (numObjects > (NUM_PICES_PERIOD - 1))
+							{
+								pice_period = (pices_time[NUM_PICES_PERIOD - 1] - pices_time[0]) / NUM_PICES_PERIOD;
+								if (pice_period < MIN_PICE_PERIOD)
+								{
+									counter_num_extra_count++;
+									xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
+
+									for (p=0; p < NUM_PICES_PERIOD; p++)
+									{
+										pices_time[p] = 0;
+									}
+								}
+							}
+						}
+	//#endif // OVER_RATE_ENABLE
+					}
+				}
+
+				// transfer objects of current line to last line
+
+				for (j=0; j < NumObjectsInCurrentLine; j++)
+				{
+					p_objects_last_line[j] = &objects_last_line[0] + (p_objects_current_line[j] - &objects_current_line[0]);
+
+					p_objects_last_line[j]->area = p_objects_current_line[j]->area;
+					p_objects_last_line[j]->cont = 0;
+					p_objects_last_line[j]->sl = 0;
+				}
+
+				NumObjectsInLastLine = NumObjectsInCurrentLine;
 			}
-
-			// transfer objects of current line to last line
-
-			for (j=0; j < NumObjectsInCurrentLine; j++)
-			{
-				p_objects_last_line[j] = &objects_last_line[0] + (p_objects_current_line[j] - &objects_current_line[0]);
-
-				p_objects_last_line[j]->area = p_objects_current_line[j]->area;
-				p_objects_last_line[j]->cont = 0;
-				p_objects_last_line[j]->sl = 0;
-			}
-
-			NumObjectsInLastLine = NumObjectsInCurrentLine;
 		}
 
 		HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
@@ -1672,18 +1893,7 @@ void vTask_USART_Service (void *pvParameters)
  *
  */
 
-void add_end_command(uint8_t * data, uint8_t * init_index)
-{
-	uint8_t index = *init_index;
 
-	index += strlen(data + index);
-	data[index] = 0xff;
-	data_tx_buffer[index + 1] = 0xff;
-	data_tx_buffer[index + 2] = 0xff;
-	index +=3;
-
-	*init_index = index;
-}
 
 
 /*
@@ -1694,135 +1904,83 @@ void tft_show_message(uint8_t msg)
 {
 	uint32_t protect_counter = HAL_GetTick();
 
-	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
+	if (msg < 4)
 	{
-		vTaskDelay(10);
-	}
-
-	if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
-	{
-		switch(msg)
+		while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
 		{
-			case 0 :
-				sprintf(data_tx_buffer, "page0.n0.pco=0");
-				break;
-
-			case 1 :
-			case 2:
-				sprintf(data_tx_buffer, "page0.n0.pco=65520");
-				break;
+			vTaskDelay(10);
 		}
 
-		num_data_tx = strlen(data_tx_buffer);
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0x00;
-		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
-	}
-}
-
-/*
- *
- */
-
-void tft_show_param(void)
-{
-	//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
-	//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
-
-	uint32_t protect_counter = HAL_GetTick();
-
-	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
-	{
-		vTaskDelay(10);
-	}
-
-	if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
-	{
-
-		num_data_tx =0;
-
-		if ((change_num_param > 0) && (change_num_param < 5))
+		if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
 		{
-			if(num_param)
+			switch(msg)
 			{
-				if(num_param != change_num_param)
-				{// деактивируем текущее поле и активируем новое
-					switch(num_param)
-					{
-						case 1 : sprintf(data_tx_buffer + num_data_tx, "page1.n0.bco=65535"); break;
-						case 2 : sprintf(data_tx_buffer + num_data_tx, "page1.n2.bco=65535"); break;
-						case 3 : sprintf(data_tx_buffer + num_data_tx, "page1.n3.bco=65535"); break;
-						case 4 : sprintf(data_tx_buffer + num_data_tx, "page1.n4.bco=65535"); break;
-					}
-					add_end_command(data_tx_buffer, &num_data_tx);
-
-					switch(change_num_param)
-					{
-						case 1 : sprintf(data_tx_buffer + num_data_tx, "page1.n0.bco=65504"); break;
-						case 2 : sprintf(data_tx_buffer + num_data_tx, "page1.n2.bco=65504"); break;
-						case 3 : sprintf(data_tx_buffer + num_data_tx, "page1.n3.bco=65504"); break;
-						case 4 : sprintf(data_tx_buffer + num_data_tx, "page1.n4.bco=65504"); break;
-					}
-					add_end_command(data_tx_buffer, &num_data_tx);
-
-					num_param = change_num_param;
-				}
-				else // е�?ли деактивируем поле
-				{
-					switch(change_num_param)
-					{
-						case 1 : sprintf(data_tx_buffer + num_data_tx, "page1.n0.bco=65535"); break;
-						case 2 : sprintf(data_tx_buffer + num_data_tx, "page1.n2.bco=65535"); break;
-						case 3 : sprintf(data_tx_buffer + num_data_tx, "page1.n3.bco=65535"); break;
-						case 4 : sprintf(data_tx_buffer + num_data_tx, "page1.n4.bco=65535"); break;
-					}
-					add_end_command(data_tx_buffer, &num_data_tx);
-
-					num_param = 0;
-				}
-			}
-			else // е�?ли небыло активно поле, то активируем
-			{
-				switch(change_num_param)
-				{
-					case 1 : sprintf(data_tx_buffer + num_data_tx, "page1.n0.bco=65504"); break;
-					case 2 : sprintf(data_tx_buffer + num_data_tx, "page1.n2.bco=65504"); break;
-					case 3 : sprintf(data_tx_buffer + num_data_tx, "page1.n3.bco=65504"); break;
-					case 4 : sprintf(data_tx_buffer + num_data_tx, "page1.n4.bco=65504"); break;
-				}
-				add_end_command(data_tx_buffer, &num_data_tx);
-
-				num_param = change_num_param;
+				case 0 : // Active
+					sprintf((char*)data_tx_buffer, "page%u.n0.pco=0", active_page);
+					break;
+				case 1 : // Idle
+					sprintf((char*)data_tx_buffer, "page%u.n0.pco=65520", active_page);
+					break;
+				case 2 :  // Protect
+					sprintf((char*)data_tx_buffer, "page%u.n0.pco=65520", active_page);
+					break;
+				case 3 : // Dirty
+					sprintf((char*)data_tx_buffer, "page%u.n0.pco=63488", active_page);
+					break;
 			}
 
-			change_num_param = 0;
+			num_data_tx = strlen((char*)data_tx_buffer);
+			data_tx_buffer[num_data_tx++] = 0xff;
+			data_tx_buffer[num_data_tx++] = 0xff;
+			data_tx_buffer[num_data_tx++] = 0xff;
+
+			xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
+		}
+	}
+
+	if (msg < 6)
+	{
+		protect_counter = HAL_GetTick();
+
+		while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
+		{
+			vTaskDelay(10);
 		}
 
-		if(num_param == 1) sprintf(data_tx_buffer + num_data_tx, "page1.n0.val=%s", param_str); else sprintf(data_tx_buffer + num_data_tx, "page1.n0.val=%d", min_area);
-		add_end_command(data_tx_buffer, &num_data_tx);
-		if(num_param == 2) sprintf(data_tx_buffer + num_data_tx, "page1.n2.val=%s", param_str); else sprintf(data_tx_buffer + num_data_tx, "page1.n2.val=%f", k_1);
-		add_end_command(data_tx_buffer, &num_data_tx);
-		if(num_param == 3) sprintf(data_tx_buffer + num_data_tx, "page1.n3.val=%s", param_str); else sprintf(data_tx_buffer + num_data_tx, "page1.n3.val=%f", k_2);
-		add_end_command(data_tx_buffer, &num_data_tx);
-		if(num_param == 4) sprintf(data_tx_buffer + num_data_tx, "page1.n4.val=%s", param_str); else sprintf(data_tx_buffer + num_data_tx, "page1.n4.val=%d", div_12);
-		add_end_command(data_tx_buffer, &num_data_tx);
+		if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
+		{
+			switch(msg)
+			{
+				case 0 : // Active
+					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\" \"", active_page);
+					break;
+				case 1 : // Idle
+					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\"Idle\"", active_page);
+					break;
+				case 2 :  // Protect
+					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\"Protect\"", active_page);
+					break;
+				case 3 : // Dirty
+					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\"Dirty\"", active_page);
+					break;
 
-		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
+				case 4 : // Dirty
+					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\"Inventory\"", active_page);
+					break;
+				case 5 : // Dirty
+					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\" \"", active_page);
+					break;
+			}
+
+			num_data_tx = strlen((char*)data_tx_buffer);
+			data_tx_buffer[num_data_tx++] = 0xff;
+			data_tx_buffer[num_data_tx++] = 0xff;
+			data_tx_buffer[num_data_tx++] = 0xff;
+
+			xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
+		}
 	}
 
-}
-
-/*
- *
- */
-
-void tft_show_clear_mode(uint8_t on_off)
-{
 
 }
 
@@ -1832,9 +1990,6 @@ void tft_show_clear_mode(uint8_t on_off)
 
 void tft_show_overcount(uint16_t state)
 {
-	//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
-	//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
-
 	uint32_t protect_counter = HAL_GetTick();
 
 	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
@@ -1846,52 +2001,66 @@ void tft_show_overcount(uint16_t state)
 	{
 		if(state)
 		{
-			sprintf(data_tx_buffer, "page0.n0.bco=63488");
+			sprintf((char*)data_tx_buffer, "page%u.n0.bco=63488", active_page);
 		}
 		else
 		{
-			sprintf(data_tx_buffer, "page0.n0.bco=65520");
+			sprintf((char*)data_tx_buffer, "page%u.n0.bco=65520", active_page);
 		}
-		num_data_tx = strlen(data_tx_buffer);
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0x00;
+		num_data_tx = strlen((char*)data_tx_buffer);
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
+	}
+
+	protect_counter = HAL_GetTick();
+
+	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
+	{
+		vTaskDelay(10);
+	}
+
+	if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
+	{
+		if(state)
+		{
+			sprintf((char*)data_tx_buffer, "page%u.t4.txt=\"SLOWLY \"", active_page);
+		}
+		else
+		{
+			sprintf((char*)data_tx_buffer, "page%u.t4.txt=\" \"", active_page);
+		}
+		num_data_tx = strlen((char*)data_tx_buffer);
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
 		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 	}
 
 
-	if(state)
+	protect_counter = HAL_GetTick();
+
+	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
 	{
-		//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
-		//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
+		vTaskDelay(10);
+	}
 
-		uint32_t protect_counter = HAL_GetTick();
-
-		while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
+	if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
+	{
+		if(state)
 		{
-			vTaskDelay(10);
-		}
-
-		if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
-		{
-			sprintf(data_tx_buffer, "page0.wav0.en=1");
-
-			num_data_tx = strlen(data_tx_buffer);
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0xff;
-			num_data_tx++;
-			data_tx_buffer[num_data_tx] = 0x00;
+			sprintf((char*)data_tx_buffer, "page%u.wav0.en=1", active_page);
+			num_data_tx = strlen((char*)data_tx_buffer);
+			data_tx_buffer[num_data_tx++] = 0xff;
+			data_tx_buffer[num_data_tx++] = 0xff;
+			data_tx_buffer[num_data_tx++] = 0xff;
 			xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 		}
 	}
 }
+
+
 
 /*
  *
@@ -1899,9 +2068,6 @@ void tft_show_overcount(uint16_t state)
 
 void tft_show_hide_counter(uint16_t state)
 {
-	//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
-	//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
-
 	uint32_t protect_counter = HAL_GetTick();
 
 	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
@@ -1913,22 +2079,18 @@ void tft_show_hide_counter(uint16_t state)
 	{
 		if(state)
 		{
-			sprintf(data_tx_buffer, "page0.n0.pco=0");
+			sprintf((char*)data_tx_buffer, "page%u.n0.pco=0", active_page);
 			xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Counter_Not_Visible);
 		}
 		else
 		{
-			sprintf(data_tx_buffer, "page0.n0.pco=65520");
+			sprintf((char*)data_tx_buffer, "page%u.n0.pco=65520", active_page);
 			xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Counter_Not_Visible);
 		}
-		num_data_tx = strlen(data_tx_buffer);
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0x00;
+		num_data_tx = strlen((char*)data_tx_buffer);
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
 		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 	}
 }
@@ -1951,15 +2113,11 @@ void tft_show_nun_pices(uint16_t num_pices)
 
 	if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
 	{
-		sprintf(data_tx_buffer, "page0.n0.val=%d", num_pices);
-		num_data_tx = strlen(data_tx_buffer);
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0x00;
+		sprintf((char*)data_tx_buffer, "page%u.n0.val=%u", active_page, num_pices);
+		num_data_tx = strlen((char*)data_tx_buffer);
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
 		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 	}
 
@@ -1981,46 +2139,55 @@ void tft_show_area_pices(uint16_t num_pice)
 	{
 		if(!num_pice)
 		{
-			sprintf(data_tx_buffer, "page0.n1.val=%d", 0);
+			sprintf((char*)data_tx_buffer, "page1.n1.val=%d", 0);
 		}
 		else
 		{
-			sprintf(data_tx_buffer, "page0.n1.val=%d", Objects_area[num_pice-1]);
+			sprintf((char*)data_tx_buffer, "page1.n1.val=%d", Objects_area[num_pice-1]);
 		}
-		num_data_tx = strlen(data_tx_buffer);
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		sprintf(data_tx_buffer + num_data_tx, "page0.n2.val=%d", num_pice);
-		num_data_tx += strlen(data_tx_buffer + num_data_tx);
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0x00;
-		sprintf(data_tx_buffer + num_data_tx, "page0.n3.val=%d", max_area);
-		num_data_tx += strlen(data_tx_buffer + num_data_tx);
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0x00;
-		sprintf(data_tx_buffer + num_data_tx, "page0.n4.val=%d", midle_area);
-		num_data_tx += strlen(data_tx_buffer + num_data_tx);
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0xff;
-		num_data_tx++;
-		data_tx_buffer[num_data_tx] = 0x00;
+		num_data_tx = strlen((char*)data_tx_buffer);
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		sprintf((char*)(data_tx_buffer + num_data_tx), "page1.n2.val=%d", num_pice);
+		num_data_tx += strlen((char*)(data_tx_buffer + num_data_tx));
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		sprintf((char*)(data_tx_buffer + num_data_tx), "page1.n3.val=%d", max_area);
+		num_data_tx += strlen((char*)(data_tx_buffer + num_data_tx));
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		sprintf((char*)(data_tx_buffer + num_data_tx), "page1.n4.val=%d", midle_area);
+		num_data_tx += strlen((char*)(data_tx_buffer + num_data_tx));
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
+	}
+}
+
+/*
+ *
+ */
+
+void tft_show_page(uint8_t page_num)
+{
+	uint32_t protect_counter = HAL_GetTick();
+
+	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
+	{
+		vTaskDelay(10);
+	}
+
+	if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
+	{
+		sprintf((char*)data_tx_buffer, "page %d", page_num);
+		num_data_tx = strlen((char*)data_tx_buffer);
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
 		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 	}
 }
@@ -2036,6 +2203,11 @@ void tft_show_area_pices(uint16_t num_pice)
 
 void StartScaner(void)
 {
+	//COMP1->CFGR |= COMP_CFGRx_INMSEL_0;
+
+	dummy_scan_counter = INIT_CLEAR_TEST_SCAN_COUNTER_VALUE;
+	clean_test_scan_counter = 0;//INIT_CLEAR_TEST_SCAN_COUNTER_VALUE;
+
 	TIM17->CR1 |= TIM_CR1_CEN;
 	TIM3->CR1 |= TIM_CR1_CEN;
 }
@@ -2046,6 +2218,9 @@ void StartScaner(void)
 
 void StopScaner(void)
 {
+	xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Scaner_State);
+//	xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Need_Stop_Scaner);
+
 	TIM3->CR1 &= ~TIM_CR1_CEN;
 	TIM17->CR1 &= ~TIM_CR1_CEN;
 }
@@ -2100,13 +2275,10 @@ void Clear_Counter (void)
 			vTaskDelay(10);
 		}
 
-		//xEventGroupWaitBits(xEventGroup_StatusFlags,Flag_UART_TX_Ready, pdFALSE, pdFALSE, portMAX_DELAY );
-		//xEventGroupClearBits(xEventGroup_StatusFlags, Flag_UART_TX_Ready);
-
 		if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
 		{
-			sprintf(data_tx_buffer, "page0.bt1.val=0");
-			num_data_tx = strlen(data_tx_buffer);
+			sprintf((char*)data_tx_buffer, "page%u.bt1.val=0", active_page);
+			num_data_tx = strlen((char*)data_tx_buffer);
 			data_tx_buffer[num_data_tx] = 0xff;
 			num_data_tx++;
 			data_tx_buffer[num_data_tx] = 0xff;
@@ -2116,7 +2288,6 @@ void Clear_Counter (void)
 			data_tx_buffer[num_data_tx] = 0x00;
 			xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 		}
-
 	}
 }
 
@@ -2163,6 +2334,8 @@ void UARTsTunning(void)
 
 void ComparatorsTuning(void)
 {
+	//internal reference 1.180 - 1.216 - 1.255 V
+		// 0000 = 1/4 VREF_COMP; 0001 = 1/2 VREF_COMP; 0010 = 3/4 VREF_COMP; 0011 = VREF_COMP; 0110 = COMP1_INM6 (PB1); 0111 = COMP1_INM7 (PC4)
     COMP1->CFGR = COMP_CFGRx_EN | COMP_CFGRx_HYST_1 | COMP_CFGRx_INMSEL_1 | COMP_CFGRx_INMSEL_2 | COMP_CFGRx_INPSEL ; //COMP1 enable , HighSpeed, Medium hysteresis, PB2 +, P1 -
     COMP2->CFGR = COMP_CFGRx_EN | COMP_CFGRx_HYST_1 | COMP_CFGRx_INMSEL_1 | COMP_CFGRx_INMSEL_2 | COMP_CFGRx_INPSEL ; //COMP1 enable , HighSpeed, Medium hysteresis, PB2 +, P1 -
 }
@@ -2228,94 +2401,53 @@ void DMA1_Stream0_IRQHandler(void)
 
     xHigherPriorityTaskWoken = pdFALSE;
 
-    /*if (xTaskGetTickCount() >= 60000)
-    {
-    	TIM3->CR1 &= ~TIM_CR1_CEN;
-    }*/
+  //  if (xEventGroupGetBitsFromISR(xEventGroup_2_StatusFlags) & Flag_Need_Stop_Scaner)
+//	{
+//		TIM3->CR1 &= ~TIM_CR1_CEN;
+//		TIM17->CR1 &= ~TIM_CR1_CEN;
+//		xEventGroupClearBitsFromISR(xEventGroup_2_StatusFlags, Flag_Need_Stop_Scaner);
+//	}
+//	else
+//	{
+		uint32_t *p_line = NULL;
 
-  /*  if (!(xEventGroupGetBitsFromISR(xEventGroup_StatusFlags) & Flag_Scanner_Busy))
-    {
-    	pixel_frame_counter_isr_success_1++;
-
-    	xResult = xEventGroupSetBitsFromISR(xEventGroup_StatusFlags, Flag_Scanner_Busy, &xHigherPriorityTaskWoken);
-
-		if( xResult != pdFAIL )
+		if (!start_time)
 		{
-			pixel_frame_counter_isr_success_2++;
-			portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+			start_time = xTaskGetTickCount();
 		}
-    }
-    else
-    {
-    	pixel_frame_counter_isr_busy++;
-    }*/
 
-    uint32_t *p_line = NULL;
-
-    if (!start_time)
-    {
-    	start_time = xTaskGetTickCount();
-    }
-
-    if (xEventGroupGetBitsFromISR(xEventGroup_StatusFlags) & Flag_Reset_lines_counters)
-    {
-    	xEventGroupClearBitsFromISR(xEventGroup_StatusFlags, Flag_Reset_lines_counters);
-
-    	global_lines_counter = 0;
-    	queue_polling_lines_counter = 0;
-    	queue_send_lines_counter = 0;
-		skip_lines_counter_2 = 0;
-		skip_lines_counter = 0;
-    }
-
- /*   global_lines_counter++;
-
-    if (xQueueReceiveFromISR(xQueue_pLines_empty_usb, &p_pixel_parsel, &xHigherPriorityTaskWoken) == pdTRUE)
-	{
-    	k = 0; r = 8;
-
-		for (uint32_t y=LINE_DUMMY, z=0; y < (LINE_SIZE + LINE_DUMMY); y += PIXEL_DIVIDER, z +=1)
+		if (xEventGroupGetBitsFromISR(xEventGroup_StatusFlags) & Flag_Reset_lines_counters)
 		{
-			*(p_line + z) = BufferCOMP1[y];
+			xEventGroupClearBitsFromISR(xEventGroup_StatusFlags, Flag_Reset_lines_counters);
 
-			if(BufferCOMP1[y] & COMP_SR_C1VAL)
+			global_lines_counter = 0;
+			queue_polling_lines_counter = 0;
+			queue_send_lines_counter = 0;
+			skip_lines_counter_2 = 0;
+			skip_lines_counter = 0;
+		}
+
+		if (xQueueReceiveFromISR(xQueue_pLines_empty, &p_line, &xHigherPriorityTaskWoken) == pdTRUE)
+		{
+			for (uint32_t y=LINE_DUMMY, z=0; y < (LINE_SIZE + LINE_DUMMY); y += PIXEL_DIVIDER, z +=1)
 			{
-				*(p_pixel_parsel + r) &= ~( 1 << k++);
+				*(p_line + z) = BufferCOMP1[y];
+			}
+
+			if (xQueueSendFromISR(xQueue_pLines_busy, &p_line, &xHigherPriorityTaskWoken) == pdTRUE)
+			{
+				queue_send_lines_counter++;
 			}
 			else
 			{
-				*(p_pixel_parsel + r) |= ( 1 << k++);
+				skip_lines_counter_2++;
 			}
-
-			if(k == 8) {k = 0; r++;}
-		}
-
-		*(uint32_t*)p_pixel_parsel = 0xAAAAAAAA;
-		*(uint32_t*)(p_pixel_parsel + 4) = global_lines_counter;
-
-		xQueueSendFromISR(xQueue_pLines_busy_usb, &p_line, &xHigherPriorityTaskWoken);
-	}*/
-
-	if (xQueueReceiveFromISR(xQueue_pLines_empty, &p_line, &xHigherPriorityTaskWoken) == pdTRUE)
-	{
-		for (uint32_t y=LINE_DUMMY, z=0; y < (LINE_SIZE + LINE_DUMMY); y += PIXEL_DIVIDER, z +=1)
-		{
-			*(p_line + z) = BufferCOMP1[y];
-		}
-
-		if (xQueueSendFromISR(xQueue_pLines_busy, &p_line, &xHigherPriorityTaskWoken) == pdTRUE)
-		{
-			queue_send_lines_counter++;
 		}
 		else
 		{
-			skip_lines_counter_2++;
+			skip_lines_counter++;
 		}
-	}
-	else
-	{
-		skip_lines_counter++;
-	}
+//	}
 
 	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
