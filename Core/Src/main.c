@@ -43,13 +43,15 @@
 
 #define SOFT_VER 01010000
 
-#define LINE_DUMMY 20
-#define LINE_SIZE 1536
-#define LINE_SIZE_WITH_DUMMY 1556
+// line specifications
+
+#define LINE_DUMMY 20									// number dummy pixels
+#define LINE_SIZE 1536									// number working pixels
+#define LINE_SIZE_WITH_DUMMY (LINE_DUMMY + LINE_SIZE)	// number tolal pixels
 
 #define MUX_SIZE 16
 
-#define USE_DEBUG_MODE 3
+#define USE_DEBUG_MODE
 
 /* USER CODE END PD */
 
@@ -107,13 +109,6 @@ uint32_t skip_lines_counter_2 = 0;
 
 uint32_t clean_test_lines_buffer[LINE_DIV_LENGHT];
 
-	//-----------
-/*
-__attribute__((section(".ram_d2"))) uint32_t BufferCOMP1[LINE_SIZE_WITH_DUMMY];
-uint32_t BufferCOMP2[LINE_SIZE_WITH_DUMMY];
-*/
-
-
   //---------- scanner algorithm lines objects ------
 
 typedef struct
@@ -133,8 +128,8 @@ uint32_t NumObjectsInLastLine = 0;
 line_object_t objects_last_line[LINE_DIV_LENGHT];
 line_object_t *p_objects_last_line[LINE_DIV_LENGHT];
 
-
 uint32_t counter_num_extra_count = 0;
+
 uint32_t numObjects = 0;
 
 //-----------------------------
@@ -253,17 +248,17 @@ uint8_t active_page = 0;
 uint8_t num_param = 0;
 char param_str[32] = {0};
 
-//----------------------------------
+//------------ major tuning parameters of scanner ----------------------
 
-#define PROTECT_SERVICE_ENABLE 1
-#define OVER_AREA 1500			// max area
-#define IDLE_STATE_TIMEOUT 1000  // seconds
+#define PROTECT_SERVICE_ENABLE 1		// protect service enable
+#define OVER_AREA 1500					// global max area
+#define IDLE_STATE_TIMEOUT 1000  		// idle state timeout in seconds
 
-uint32_t min_area = 10;
-float k_1 = 3.0; // for small
-float k_2 = 1.7; // for big
-uint32_t div_12 = 200;
-uint32_t max_area = 1500;
+float k_1 = 3.0; 						// for small tablets
+float k_2 = 1.7; 						// for big tablets
+uint32_t div_12 = 200;					// area separating small and big tablets
+uint32_t min_area = 10;					// current smallest area to be taken into account
+uint32_t max_area = 1500;				// current largest area to be taken into account without division
 
 //----------------------------------
 
@@ -273,11 +268,16 @@ void tft_show_param(void);
 void service_page_0(uint8_t but, uint8_t val);
 void service_page_1(uint8_t but, uint8_t val);
 
+// USB interface variables
+
 extern USBD_HandleTypeDef hUsbDeviceHS;
 
 uint8_t * p_pixel_parsel = NULL;
 uint8_t temp_pixel_parsel[LINE_TRANS_LENGHT];
 uint32_t pixel_parsel_counter = 0;
+
+// after start scanner execute dummy scans for clear line,
+// then do scan for determining whether the line is clean
 
 uint32_t start_time =0;
 
@@ -286,6 +286,8 @@ uint32_t start_time =0;
 
 uint32_t dummy_scan_counter = INIT_DUMMY_SCAN_COUNTER_VALUE;
 uint32_t clean_test_scan_counter = INIT_CLEAR_TEST_SCAN_COUNTER_VALUE;
+
+// switch work and debug screens
 
 #define TOUCH_PERIOD 3000
 #define NUM_TOUCH_FOR_SWITCH_PAGE 3
@@ -1419,7 +1421,7 @@ void vTask_ContainerDetect(void *pvParameters)
 			  {
 				  xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Container_Removed);
 
-				//  StopScaner();
+				  StopScaner();
 
 				  event_state = 1;
 			  }
@@ -2209,7 +2211,10 @@ void StartScaner(void)
 	clean_test_scan_counter = 0;//INIT_CLEAR_TEST_SCAN_COUNTER_VALUE;
 
 	TIM17->CR1 |= TIM_CR1_CEN;
+	TIM17->CCER = TIM_CCER_CC1E;
+
 	TIM3->CR1 |= TIM_CR1_CEN;
+	TIM3->CCER = TIM_CCER_CC1E | TIM_CCER_CC2E;
 }
 
 /*
@@ -2222,7 +2227,10 @@ void StopScaner(void)
 //	xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Need_Stop_Scaner);
 
 	TIM3->CR1 &= ~TIM_CR1_CEN;
+	TIM3->CCER &= ~(TIM_CCER_CC1E | TIM_CCER_CC2E);
+
 	TIM17->CR1 &= ~TIM_CR1_CEN;
+	TIM17->CCER &= ~TIM_CCER_CC1E;
 }
 
 /*
@@ -2302,14 +2310,14 @@ void TimersTuning(void)
     TIM3->CCR1 = 50;
     TIM3->CCR2 = 60;
     TIM3->CCMR1 = TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC2M_1 | TIM_CCMR1_OC2M_2 | TIM_CCMR1_OC1FE | TIM_CCMR1_OC2FE;
-    TIM3->CCER = TIM_CCER_CC1E | TIM_CCER_CC2E;
+    //TIM3->CCER = TIM_CCER_CC1E | TIM_CCER_CC2E;
     TIM3->DIER = TIM_DIER_CC1IE;
 
     TIM17->PSC = 0;
     TIM17->ARR = 56;
     TIM17->CCR1 = 31;
     TIM17->CCMR1 = TIM_CCMR1_OC1M_0 | TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC1FE;
-    TIM17->CCER = TIM_CCER_CC1E;
+    //TIM17->CCER = TIM_CCER_CC1E;
     TIM17->BDTR = TIM_BDTR_MOE;
     TIM17->DIER = TIM_DIER_CC1DE;
 }
