@@ -199,6 +199,7 @@ void tft_show_area_pices(uint16_t num_pice);
 void tft_show_overcount(uint16_t state);
 void tft_show_hide_counter(uint16_t state);
 void tft_show_page(uint8_t page_num);
+void tft_send_click(uint8_t num_but, uint8_t event);
 
 void Delay_us(uint32_t us);
 
@@ -235,6 +236,7 @@ const EventBits_t Flag_Need_Stop_Scaner	 =			0x00000001;
 const EventBits_t Flag_Envent_Mode = 				0x00000002;
 const EventBits_t Flag_Envent_Mode_Press =			0x00000004;
 const EventBits_t Flag_Envent_Mode_Unpress =		0x00000008;
+const EventBits_t Flag_Need_Mode_Event  =			0x00000010;
 
 EventGroupHandle_t xEventGroup_ChangeScreenFlags;
 
@@ -394,7 +396,7 @@ int main(void)
   xQueue_pLines_busy = xQueueCreate( QUEUE_NUM_LINES, sizeof(uint32_t) );
   xQueue_pLines_empty = xQueueCreate( QUEUE_NUM_LINES, sizeof(uint32_t) );
 
-  for(uint i = 0; i < QUEUE_NUM_LINES; i++)
+  for(uint16_t i = 0; i < QUEUE_NUM_LINES; i++)
   {
 	  p_line = lines_buffer + (i * LINE_DIV_LENGHT);
 	  xQueueSend(xQueue_pLines_empty, &p_line, 0);
@@ -403,7 +405,7 @@ int main(void)
   xQueue_pLines_busy_usb = xQueueCreate( QUEUE_NUM_LINES_USB, sizeof(uint32_t) );
   xQueue_pLines_empty_usb = xQueueCreate( QUEUE_NUM_LINES_USB, sizeof(uint32_t) );
 
-  for(uint i = 0; i < QUEUE_NUM_LINES_USB; i++)
+  for(uint16_t i = 0; i < QUEUE_NUM_LINES_USB; i++)
   {
 	  p_line = lines_buffer_usb + (i * LINE_TRANS_LENGHT);
 	  xQueueSend(xQueue_pLines_empty_usb, &p_line, 0);
@@ -412,7 +414,7 @@ int main(void)
   xQueue_pLines_busy_uart = xQueueCreate( QUEUE_NUM_LINES_UART, sizeof(uint32_t) );
   xQueue_pLines_empty_uart = xQueueCreate( QUEUE_NUM_LINES_UART, sizeof(uint32_t) );
 
-  for(uint i = 0; i < QUEUE_NUM_LINES_UART; i++)
+  for(uint16_t i = 0; i < QUEUE_NUM_LINES_UART; i++)
   {
 	  p_line = lines_buffer_uart + (i * LINE_TRANS_LENGHT);
 	  xQueueSend(xQueue_pLines_empty_uart, &p_line, 0);
@@ -445,7 +447,7 @@ int main(void)
   xTaskCreate(vTask_USART_Service,(char*)"USART Service", 1024, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_USART_Service);
 
     //xTaskCreate(vTask_UART_Line_TX,(char*)"UART Line TX", 512, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_UART_Line_TX);
-  xTaskCreate(vTask_USB_Line_TX,(char*)"USB Line TX", 1024, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_USB_Line_TX);
+  //xTaskCreate(vTask_USB_Line_TX,(char*)"USB Line TX", 1024, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_USB_Line_TX);
 
   StartScaner();
 
@@ -927,6 +929,22 @@ void vTask_Display(void *pvParameters)
 				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Scaner_Dirty_Event);
 				tft_show_message(3); // Not Clear
 			}
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Need_Mode_Event)
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Need_Mode_Event);
+
+				if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Mode_Blue)
+				{
+					if (!active_page)
+					{
+						tft_send_click(4, 1);
+					}
+					else
+					{
+						tft_send_click(12, 1);
+					}
+				}
+			}
 			else
 			{
 
@@ -1093,6 +1111,11 @@ void vTask_Display(void *pvParameters)
 		}
 
 		vTaskDelay(100);
+
+	/*	tft_show_nun_pices(numObjects);
+		vTaskDelay(1000);*/
+
+
 	}
 
 }
@@ -1424,6 +1447,9 @@ void vTask_ContainerDetect(void *pvParameters)
 				  StopScaner();
 
 				  event_state = 1;
+
+				  xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Need_Mode_Event);
+
 			  }
 		  }
 		  else
@@ -1467,6 +1493,10 @@ void vTask_Scanner(void *pvParameters)
 		{
 			p_pixel_parsel = temp_pixel_parsel;
 		}
+
+		/*
+		clean_test_scan_counter =0;
+		*/
 
 		if(dummy_scan_counter) // dummy scans for normal start line
 		{
@@ -1514,10 +1544,14 @@ void vTask_Scanner(void *pvParameters)
 					{
 						*(p_pixel_parsel + r) |= ( 1 << k++);
 
-						clean_test_lines_buffer[j]++;
+						//clean_test_lines_buffer[j]++;
+
+						StopScaner();
+						xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Scaner_Dirty | Flag_Scaner_Dirty_Event);
+						break;
 					}
 
-					if(k == 8)
+					/*if(k == 8)
 					{
 						k = 0;
 						r++;
@@ -1536,7 +1570,7 @@ void vTask_Scanner(void *pvParameters)
 						{
 							COMP1->CFGR &= ~COMP_CFGRx_INMSEL_0;
 						}
-					}
+					}*/
 				}
 			}
 			else
@@ -1607,6 +1641,17 @@ void vTask_Scanner(void *pvParameters)
 
 				for (j=0; j < NumObjectsInLastLine; j++)
 				{
+					// check over area
+					if (p_objects_last_line[j]->area > OVER_AREA)
+					{
+#ifdef PROTECT_SERVICE_ENABLE
+						StopScaner();
+						xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Protect_State |  Flag_Protect_Event);
+#endif // PROTECT_SERVICE_ENABLE
+						p_objects_last_line[j]->area = 0;
+						continue;
+					}
+
 					if (!p_objects_last_line[j]->cont)
 					{
 						if (p_objects_last_line[j] == previous_p_objects_last_line)
@@ -1927,7 +1972,7 @@ void tft_show_message(uint8_t msg)
 					sprintf((char*)data_tx_buffer, "page%u.n0.pco=65520", active_page);
 					break;
 				case 3 : // Dirty
-					sprintf((char*)data_tx_buffer, "page%u.n0.pco=63488", active_page);
+					sprintf((char*)data_tx_buffer, "page%u.n0.pco=65520", active_page); //63488
 					break;
 			}
 
@@ -2120,6 +2165,7 @@ void tft_show_nun_pices(uint16_t num_pices)
 		data_tx_buffer[num_data_tx++] = 0xff;
 		data_tx_buffer[num_data_tx++] = 0xff;
 		data_tx_buffer[num_data_tx++] = 0xff;
+
 		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
 	}
 
@@ -2194,6 +2240,26 @@ void tft_show_page(uint8_t page_num)
 	}
 }
 
+void tft_send_click(uint8_t num_but, uint8_t event)
+{
+	uint32_t protect_counter = HAL_GetTick();
+
+	while ((xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX) && ((HAL_GetTick() - protect_counter) < 1000))
+	{
+		vTaskDelay(10);
+	}
+
+	if (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_USART_TX))
+	{
+		//sprintf((char*)data_tx_buffer, "click %u,%u", num_but, event);
+		sprintf((char*)data_tx_buffer, "click bt1,%u", event);
+		num_data_tx = strlen((char*)data_tx_buffer);
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		data_tx_buffer[num_data_tx++] = 0xff;
+		xEventGroupSetBits(xEventGroup_StatusFlags, Flag_USART_TX);
+	}
+}
 
 /*
  * *************** General Purpose Functions ***************
@@ -2208,7 +2274,7 @@ void StartScaner(void)
 	//COMP1->CFGR |= COMP_CFGRx_INMSEL_0;
 
 	dummy_scan_counter = INIT_CLEAR_TEST_SCAN_COUNTER_VALUE;
-	clean_test_scan_counter = 0;//INIT_CLEAR_TEST_SCAN_COUNTER_VALUE;
+	clean_test_scan_counter = INIT_CLEAR_TEST_SCAN_COUNTER_VALUE;
 
 	TIM17->CR1 |= TIM_CR1_CEN;
 	TIM17->CCER = TIM_CCER_CC1E;
@@ -2354,8 +2420,6 @@ void ComparatorsTuning(void)
 
 void SystemInterruptsTuning(void)
 {
-
-
     NVIC_EnableIRQ(TIM3_IRQn);
     NVIC_SetPriority(TIM3_IRQn, 10);
 
