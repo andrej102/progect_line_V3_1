@@ -252,7 +252,8 @@ char param_str[32] = {0};
 
 //------------ major tuning parameters of scanner ----------------------
 
-#define PROTECT_SERVICE_ENABLE 1		// protect service enable
+//#define PROTECT_SERVICE_ENABLE 1		// protect service enable
+#define CLEAN_TEST_SERVICE_ENABLE 1		// clean test service enable
 #define OVER_AREA 1500					// global max area
 #define IDLE_STATE_TIMEOUT 1000  		// idle state timeout in seconds
 
@@ -1494,9 +1495,9 @@ void vTask_Scanner(void *pvParameters)
 			p_pixel_parsel = temp_pixel_parsel;
 		}
 
-		/*
+#ifndef CLEAN_TEST_SERVICE_ENABLE
 		clean_test_scan_counter =0;
-		*/
+#endif		// CLEAN_TEST_SERVICE_ENABLE
 
 		if(dummy_scan_counter) // dummy scans for normal start line
 		{
