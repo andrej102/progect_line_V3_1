@@ -945,6 +945,17 @@ void vTask_Display(void *pvParameters)
 						tft_send_click(12, 1);
 					}
 				}
+				else
+				{
+					if (!active_page)
+					{
+						tft_send_click(4, 0);
+					}
+					else
+					{
+						tft_send_click(12, 0);
+					}
+				}
 			}
 			else
 			{
@@ -1208,6 +1219,8 @@ void service_page_1(uint8_t but, uint8_t val)
 		  {
 			  xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Mode_Blue);
 
+			  COMP1->CFGR |= COMP_CFGRx_INMSEL_0; // PC4 -
+
 			  /*Configure GPIO pin : TIM3_CH2_LIGTH_Pin */
 				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
 				GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -1225,6 +1238,8 @@ void service_page_1(uint8_t but, uint8_t val)
 		  }
 		  else if (!val)
 		  {
+			  COMP1->CFGR &= ~COMP_CFGRx_INMSEL_0; // PB1 -
+
 			  /*Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin */
 				 GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
 				 GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -1265,44 +1280,57 @@ void service_page_0(uint8_t but, uint8_t val)
 	{
 		case 4 :
 		{
-			  if (val)
-			  {
-				xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Mode_Blue);
+			//if (!numObjects)
+			//{
+			//	StopScaner();
 
-				//Configure GPIO pin : TIM3_CH2_LIGTH_Pin
-				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
-				GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-				GPIO_InitStruct.Pull = GPIO_NOPULL;
-				HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
-				HAL_GPIO_WritePin(TIM3_CH2_LIGHT_GPIO_Port, TIM3_CH2_LIGHT_Pin, 0);
+				if (val)
+				{
+					xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Mode_Blue);
 
-				 //Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin
-				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
-				GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-				GPIO_InitStruct.Pull = GPIO_NOPULL;
-				GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-				GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
-				HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
-			  }
-			  else if (!val)
-			  {
-				//Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin
-				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
-				GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-				GPIO_InitStruct.Pull = GPIO_NOPULL;
-				HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
-				HAL_GPIO_WritePin(TIM3_CH2_LIGHT_BLUE_GPIO_Port, TIM3_CH2_LIGHT_BLUE_Pin, 0);
+					COMP1->CFGR |= COMP_CFGRx_INMSEL_0; // PC4 -
 
-				 //Configure GPIO pin : TIM3_CH2_LIGTH_Pin
-				GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
-				GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-				GPIO_InitStruct.Pull = GPIO_NOPULL;
-				GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-				GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
-				HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
+					//Configure GPIO pin : TIM3_CH2_LIGTH_Pin
+					GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
+					GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+					GPIO_InitStruct.Pull = GPIO_NOPULL;
+					HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
+					HAL_GPIO_WritePin(TIM3_CH2_LIGHT_GPIO_Port, TIM3_CH2_LIGHT_Pin, 0);
 
-				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Mode_Blue);
-			 }
+					 //Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin
+					GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
+					GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+					GPIO_InitStruct.Pull = GPIO_NOPULL;
+					GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+					GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
+					HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
+				}
+				else if (!val)
+				{
+					COMP1->CFGR &= ~COMP_CFGRx_INMSEL_0; // PB1 -
+
+					  //Configure GPIO pin : TIM3_CH2_LIGTH_BLUE_Pin
+					GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_BLUE_Pin;
+					GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+					GPIO_InitStruct.Pull = GPIO_NOPULL;
+					HAL_GPIO_Init(TIM3_CH2_LIGHT_BLUE_GPIO_Port, &GPIO_InitStruct);
+					HAL_GPIO_WritePin(TIM3_CH2_LIGHT_BLUE_GPIO_Port, TIM3_CH2_LIGHT_BLUE_Pin, 0);
+
+					 //Configure GPIO pin : TIM3_CH2_LIGTH_Pin
+					GPIO_InitStruct.Pin = TIM3_CH2_LIGHT_Pin;
+					GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+					GPIO_InitStruct.Pull = GPIO_NOPULL;
+					GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+					GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
+					HAL_GPIO_Init(TIM3_CH2_LIGHT_GPIO_Port, &GPIO_InitStruct);
+
+					xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Mode_Blue);
+				 }
+
+				// xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Activity_Detect);
+			// }
+
+			// xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Need_Mode_Event);
 
 			 break;
 		}
@@ -1430,10 +1458,7 @@ void vTask_ContainerDetect(void *pvParameters)
 				  xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Activity_Detect);
 			  }
 		  }
-		  else
-		  {
-			  event_state = 0;
-		  }
+		  else event_state = 0;
 
 		  previous_state = 1;
 	  }
@@ -1444,13 +1469,9 @@ void vTask_ContainerDetect(void *pvParameters)
 			  if(!event_state)
 			  {
 				  xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Container_Removed);
-
 				  StopScaner();
-
 				  event_state = 1;
-
 				  xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Need_Mode_Event);
-
 			  }
 		  }
 		  else
