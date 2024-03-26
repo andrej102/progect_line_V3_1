@@ -33,5 +33,7 @@
 
 Debug
 Release
+.settings
 /debug/
 /release/
+/.settings/
