@@ -232,11 +232,12 @@ const EventBits_t Flag_Scaner_Dirty_Event	 =		0x00800000;
 
 EventGroupHandle_t xEventGroup_StatusFlags_2;
 
-const EventBits_t Flag_Need_Stop_Scaner	 =			0x00000001;
-const EventBits_t Flag_Envent_Mode = 				0x00000002;
-const EventBits_t Flag_Envent_Mode_Press =			0x00000004;
-const EventBits_t Flag_Envent_Mode_Unpress =		0x00000008;
-const EventBits_t Flag_Need_Mode_Event  =			0x00000010;
+const EventBits_t Flag_2_Need_Stop_Scaner	 =			0x00000001;
+const EventBits_t Flag_2_Envent_Mode = 				0x00000002;
+const EventBits_t Flag_2_Envent_Mode_Press =			0x00000004;
+const EventBits_t Flag_2_Envent_Mode_Unpress =		0x00000008;
+const EventBits_t Flag_2_Need_Mode_Event  =			0x00000010;
+const EventBits_t Flag_2_Debug_Mode = 				0x00000020;
 
 EventGroupHandle_t xEventGroup_ChangeScreenFlags;
 
@@ -252,7 +253,7 @@ char param_str[32] = {0};
 
 //------------ major tuning parameters of scanner ----------------------
 
-//#define PROTECT_SERVICE_ENABLE 1		// protect service enable
+#define PROTECT_SERVICE_ENABLE 1		// protect service enable
 #define CLEAN_TEST_SERVICE_ENABLE 1		// clean test service enable
 #define OVER_AREA 1500					// global max area
 #define IDLE_STATE_TIMEOUT 1000  		// idle state timeout in seconds
@@ -900,14 +901,14 @@ void vTask_Display(void *pvParameters)
 				xEventGroupClearBits(xEventGroup_ChangeScreenFlags, Flag_Show_Screen_0);
 				tft_show_page(0);
 			}
-			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Envent_Mode_Press)
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_2_Envent_Mode_Press)
 			{
-				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Press);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Press);
 				tft_show_message(4); //
 			}
-			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Envent_Mode_Unpress)
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_2_Envent_Mode_Unpress)
 			{
-				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Unpress);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Unpress);
 				tft_show_message(5); //
 			}
 			else if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Scaner_Event)
@@ -930,9 +931,9 @@ void vTask_Display(void *pvParameters)
 				xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Scaner_Dirty_Event);
 				tft_show_message(3); // Not Clear
 			}
-			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Need_Mode_Event)
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_2_Need_Mode_Event)
 			{
-				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Need_Mode_Event);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Need_Mode_Event);
 
 				if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Mode_Blue)
 				{
@@ -1029,14 +1030,14 @@ void vTask_Display(void *pvParameters)
 				xEventGroupClearBits(xEventGroup_ChangeScreenFlags, Flag_Show_Screen_0);
 				tft_show_page(0);
 			}
-			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Envent_Mode_Press)
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_2_Envent_Mode_Press)
 			{
-				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Press);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Press);
 				tft_show_message(4); //
 			}
-			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Envent_Mode_Unpress)
+			else if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_2_Envent_Mode_Unpress)
 			{
-				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Unpress);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Unpress);
 				tft_show_message(5); //
 			}
 			else if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Scaner_Event)
@@ -1203,11 +1204,11 @@ void service_page_1(uint8_t but, uint8_t val)
 		{
 			if (val)
 			{
-				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode);
+				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode);
 			}
 			else
 			{
-				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode);
 			}
 
 			break;
@@ -1260,6 +1261,27 @@ void service_page_1(uint8_t but, uint8_t val)
 
 		  break;
 		}
+
+		case 17 :
+		{
+			if (val)
+			{
+				StopScaner();
+				Clear_Counter();
+				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_2_Debug_Mode);
+				if(!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Container_Removed))
+				{
+					xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Activity_Detect);
+				}
+			}
+			else
+			{
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Debug_Mode);
+			}
+
+			break;
+		}
+
 
 		default : break;
 	}
@@ -1330,7 +1352,7 @@ void service_page_0(uint8_t but, uint8_t val)
 				// xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Activity_Detect);
 			// }
 
-			// xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Need_Mode_Event);
+			// xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_2_Need_Mode_Event);
 
 			 break;
 		}
@@ -1363,15 +1385,15 @@ void service_page_0(uint8_t but, uint8_t val)
 		{
 			if (val)
 			{
-				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode);
-				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Unpress);
-				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Press);
+				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Unpress);
+				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Press);
 			}
 			else
 			{
-				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode);
-				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Press);
-				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Envent_Mode_Unpress);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Press);
+				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Unpress);
 			}
 
 			break;
@@ -1450,7 +1472,7 @@ void vTask_ContainerDetect(void *pvParameters)
 				  xEventGroupClearBits(xEventGroup_StatusFlags, Flag_Container_Removed);
 				  event_state = 1;
 
-				  if (!(xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_Envent_Mode))
+				  if (!(xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_2_Envent_Mode))
 				  {
 					  Clear_Counter();
 				  }
@@ -1471,7 +1493,7 @@ void vTask_ContainerDetect(void *pvParameters)
 				  xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Container_Removed);
 				  StopScaner();
 				  event_state = 1;
-				  xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Need_Mode_Event);
+				  xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_2_Need_Mode_Event);
 			  }
 		  }
 		  else
@@ -1510,6 +1532,15 @@ void vTask_Scanner(void *pvParameters)
 		xQueueReceive(xQueue_pLines_busy, &p_line, portMAX_DELAY);
 
 		HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
+
+		if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_2_Debug_Mode)
+		{
+			dummy_scan_counter = INIT_DUMMY_SCAN_COUNTER_VALUE;
+			if(!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Container_Removed))
+			{
+				xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Activity_Detect);
+			}
+		}
 
 		if (xQueueReceive(xQueue_pLines_empty_usb, &p_pixel_parsel, 0) != pdTRUE)
 		{
@@ -1566,33 +1597,10 @@ void vTask_Scanner(void *pvParameters)
 					{
 						*(p_pixel_parsel + r) |= ( 1 << k++);
 
-						//clean_test_lines_buffer[j]++;
-
 						StopScaner();
 						xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Scaner_Dirty | Flag_Scaner_Dirty_Event);
 						break;
 					}
-
-					/*if(k == 8)
-					{
-						k = 0;
-						r++;
-					}
-
-					clear_tester += clean_test_lines_buffer[j];
-
-					if(!clean_test_scan_counter)
-					{
-						if (clear_tester)
-						{
-							StopScaner();
-							xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Scaner_Dirty | Flag_Scaner_Dirty_Event);
-						}
-						else
-						{
-							COMP1->CFGR &= ~COMP_CFGRx_INMSEL_0;
-						}
-					}*/
 				}
 			}
 			else
@@ -2312,7 +2320,7 @@ void StartScaner(void)
 void StopScaner(void)
 {
 	xEventGroupClearBits( xEventGroup_StatusFlags, Flag_Scaner_State);
-//	xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_Need_Stop_Scaner);
+//	xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_2_Need_Stop_Scaner);
 
 	TIM3->CR1 &= ~TIM_CR1_CEN;
 	TIM3->CCER &= ~(TIM_CCER_CC1E | TIM_CCER_CC2E);
@@ -2495,11 +2503,11 @@ void DMA1_Stream0_IRQHandler(void)
 
     xHigherPriorityTaskWoken = pdFALSE;
 
-  //  if (xEventGroupGetBitsFromISR(xEventGroup_2_StatusFlags) & Flag_Need_Stop_Scaner)
+  //  if (xEventGroupGetBitsFromISR(xEventGroup_2_StatusFlags) & Flag_2_Need_Stop_Scaner)
 //	{
 //		TIM3->CR1 &= ~TIM_CR1_CEN;
 //		TIM17->CR1 &= ~TIM_CR1_CEN;
-//		xEventGroupClearBitsFromISR(xEventGroup_2_StatusFlags, Flag_Need_Stop_Scaner);
+//		xEventGroupClearBitsFromISR(xEventGroup_2_StatusFlags, Flag_2_Need_Stop_Scaner);
 //	}
 //	else
 //	{
