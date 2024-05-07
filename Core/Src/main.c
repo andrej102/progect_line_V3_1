@@ -849,7 +849,10 @@ void vTask_Main(void *pvParameters)
 				memset(current_line, 0, sizeof(current_line));
 				memset(objects_last_line, 0, sizeof(objects_last_line));
 
-				Clear_Counter();
+				if (!(xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_2_Envent_Mode))
+				{
+				  Clear_Counter();
+				}
 
 				StartScaner();
 				xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Scaner_State | Flag_Scaner_Event);
@@ -956,6 +959,11 @@ void vTask_Display(void *pvParameters)
 					{
 						tft_send_click(12, 0);
 					}
+				}
+
+				if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_State)
+				{
+					tft_show_message(0);
 				}
 			}
 			else
@@ -1205,10 +1213,14 @@ void service_page_1(uint8_t but, uint8_t val)
 			if (val)
 			{
 				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Unpress);
+				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Press);
 			}
 			else
 			{
 				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode);
+				xEventGroupClearBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Press);
+				xEventGroupSetBits(xEventGroup_StatusFlags_2, Flag_2_Envent_Mode_Unpress);
 			}
 
 			break;
