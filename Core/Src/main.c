@@ -993,7 +993,7 @@ void vTask_Display(void *pvParameters)
 				}
 
 				//------
-				if ( (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Protect_State)) && (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_State)))
+				if ( (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Protect_State)) /*&& (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_State))*/)
 				{
 					if (timer_counter_flashing_display)
 					{
@@ -1097,7 +1097,7 @@ void vTask_Display(void *pvParameters)
 				}
 
 				//------
-				if ( (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Protect_State)) && (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_State)))
+				if ( (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Protect_State)) /*&& (!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Idle_State))*/)
 				{
 					if (timer_counter_flashing_display)
 					{
@@ -2044,7 +2044,7 @@ void tft_show_message(uint8_t msg)
 					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\" \"", active_page);
 					break;
 				case 1 : // Idle
-					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\"Idle\"", active_page);
+					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\"Sleep\"", active_page);
 					break;
 				case 2 :  // Protect
 					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\"Protect\"", active_page);
