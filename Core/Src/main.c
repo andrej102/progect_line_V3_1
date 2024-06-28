@@ -1674,134 +1674,172 @@ void vTask_Scanner(void *pvParameters)
 					last_line[j] = current_line[j];
 				}
 
-
-						// Common mode
-
-				// check if there are completed objects on the previous line
-
-				line_object_t * previous_p_objects_last_line = NULL;
-
-				for (j=0; j < NumObjectsInLastLine; j++)
+				if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Mode_Transparent)
 				{
-					// check over area
-					if (p_objects_last_line[j]->area > OVER_AREA)
+					// Transparent mode
+
+					if (!transparent_object_start)
 					{
-#ifdef PROTECT_SERVICE_ENABLE
-						StopScaner();
-						xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Protect_State |  Flag_Protect_Event);
-#endif // PROTECT_SERVICE_ENABLE
-						p_objects_last_line[j]->area = 0;
-						continue;
+						if (NumObjectsInCurrentLine)
+						{
+							transparent_object_start = 1;
+							Objects_area[numObjects] = 0;
+							transparent_object_overtime = HAL_GetTick();
+							transparent_object_current_line_overtime = HAL_GetTick();
+						}
 					}
 
-					if (!p_objects_last_line[j]->cont)
+					if(transparent_object_start)
 					{
-						if (p_objects_last_line[j] == previous_p_objects_last_line)
+						if ((HAL_GetTick() - transparent_object_overtime > TRANSPARENT_OBJECT_OVERTIME) || ((HAL_GetTick() - transparent_object_current_line_overtime > TRANSPARENT_OBJECT_CURRENT_LINE_OVERTIME)))
 						{
-							continue;
+							transparent_object_start = 0;
+							numObjects++;
 						}
 						else
 						{
-							previous_p_objects_last_line = p_objects_last_line[j];
-						}
+							if (NumObjectsInCurrentLine)
+							{
+								transparent_object_current_line_overtime = HAL_GetTick();
 
+								for(j = 0; j < NumObjectsInCurrentLine; j++)
+								{
+									Objects_area[numObjects] += p_objects_current_line[j]->area;
+								}
+							}
+						}
+					}
+				}
+				else
+				{
+							// Common mode
+
+					// check if there are completed objects on the previous line
+
+					line_object_t * previous_p_objects_last_line = NULL;
+
+					for (j=0; j < NumObjectsInLastLine; j++)
+					{
 						// check over area
 						if (p_objects_last_line[j]->area > OVER_AREA)
 						{
-#ifdef PROTECT_SERVICE_ENABLE
+	#ifdef PROTECT_SERVICE_ENABLE
 							StopScaner();
 							xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Protect_State |  Flag_Protect_Event);
-#endif // PROTECT_SERVICE_ENABLE
+	#endif // PROTECT_SERVICE_ENABLE
 							p_objects_last_line[j]->area = 0;
 							continue;
 						}
 
-						// check under area
-						if (p_objects_last_line[j]->area < min_area)
+						if (!p_objects_last_line[j]->cont)
 						{
-							p_objects_last_line[j]->area = 0;
-							continue;
-						}
-						numObjects_temp = numObjects;
-
-						while (p_objects_last_line[j]->area)
-						{
-							if (p_objects_last_line[j]->area > max_area)
+							if (p_objects_last_line[j] == previous_p_objects_last_line)
 							{
-								//if (midle_area >= div_12)
-								//{
-
-	#ifndef OVER_RATE_ENABLE
-									xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
-	#endif //OVER_RATE_ENABLE
-									Objects_area[numObjects] = max_area;
-									p_objects_last_line[j]->area -= max_area;
-								//}
-								//else
-								//{
-								//	Objects_area[numObjects] = p_objects_last_line[j]->area;
-								//	p_objects_last_line[j]->area = 0;
-								//}
+								continue;
 							}
 							else
 							{
-								Objects_area[numObjects] = p_objects_last_line[j]->area;
+								previous_p_objects_last_line = p_objects_last_line[j];
+							}
+
+							// check over area
+							if (p_objects_last_line[j]->area > OVER_AREA)
+							{
+	#ifdef PROTECT_SERVICE_ENABLE
+								StopScaner();
+								xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Protect_State |  Flag_Protect_Event);
+	#endif // PROTECT_SERVICE_ENABLE
 								p_objects_last_line[j]->area = 0;
+								continue;
 							}
 
-							/*if(numObjects)
+							// check under area
+							if (p_objects_last_line[j]->area < min_area)
 							{
-								if (Objects_area[numObjects] == Objects_area[numObjects - 1])
+								p_objects_last_line[j]->area = 0;
+								continue;
+							}
+							numObjects_temp = numObjects;
+
+							while (p_objects_last_line[j]->area)
+							{
+								if (p_objects_last_line[j]->area > max_area)
 								{
-									numObjects--;
+									//if (midle_area >= div_12)
+									//{
+
+		#ifndef OVER_RATE_ENABLE
+										xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
+		#endif //OVER_RATE_ENABLE
+										Objects_area[numObjects] = max_area;
+										p_objects_last_line[j]->area -= max_area;
+									//}
+									//else
+									//{
+									//	Objects_area[numObjects] = p_objects_last_line[j]->area;
+									//	p_objects_last_line[j]->area = 0;
+									//}
 								}
-							}*/
-
-							numObjects++;
-
-							xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Activity_Detect);
-
-							if (numObjects == NUM_PICES_FOR_EXECUTE_MIDLE)
-							{
-								midle_area = 0;
-								for (i=0; i < NUM_PICES_FOR_EXECUTE_MIDLE; i++) midle_area += Objects_area[i];
-								midle_area /= NUM_PICES_FOR_EXECUTE_MIDLE;
-								max_area = (midle_area < div_12) ? (midle_area * k_1) : (midle_area * k_2);
-								min_area = (midle_area*15)/100;
-							}
-
-							if(numObjects > 1000)
-							{
-								numObjects = 0;
-							}
-						}
-
-	//#ifdef OVER_RATE_ENABLE
-						if ((numObjects_temp != numObjects) && (midle_area < div_12) && numObjects > NUM_PICES_FOR_EXECUTE_MIDLE)
-						{
-							for (p=1; p < NUM_PICES_PERIOD; p++)
-							{
-								pices_time[p-1] = pices_time[p];
-							}
-
-							pices_time[NUM_PICES_PERIOD - 1]  = HAL_GetTick();
-
-							if (numObjects > (NUM_PICES_PERIOD - 1))
-							{
-								pice_period = (pices_time[NUM_PICES_PERIOD - 1] - pices_time[0]) / NUM_PICES_PERIOD;
-								if (pice_period < MIN_PICE_PERIOD)
+								else
 								{
-									counter_num_extra_count++;
-									xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
+									Objects_area[numObjects] = p_objects_last_line[j]->area;
+									p_objects_last_line[j]->area = 0;
+								}
 
-									for (p=0; p < NUM_PICES_PERIOD; p++)
+								/*if(numObjects)
+								{
+									if (Objects_area[numObjects] == Objects_area[numObjects - 1])
 									{
-										pices_time[p] = 0;
+										numObjects--;
+									}
+								}*/
+
+								numObjects++;
+
+								xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Activity_Detect);
+
+								if (numObjects == NUM_PICES_FOR_EXECUTE_MIDLE)
+								{
+									midle_area = 0;
+									for (i=0; i < NUM_PICES_FOR_EXECUTE_MIDLE; i++) midle_area += Objects_area[i];
+									midle_area /= NUM_PICES_FOR_EXECUTE_MIDLE;
+									max_area = (midle_area < div_12) ? (midle_area * k_1) : (midle_area * k_2);
+									min_area = (midle_area*15)/100;
+								}
+
+								if(numObjects > 1000)
+								{
+									numObjects = 0;
+								}
+							}
+
+		//#ifdef OVER_RATE_ENABLE
+							if ((numObjects_temp != numObjects) && (midle_area < div_12) && numObjects > NUM_PICES_FOR_EXECUTE_MIDLE)
+							{
+								for (p=1; p < NUM_PICES_PERIOD; p++)
+								{
+									pices_time[p-1] = pices_time[p];
+								}
+
+								pices_time[NUM_PICES_PERIOD - 1]  = HAL_GetTick();
+
+								if (numObjects > (NUM_PICES_PERIOD - 1))
+								{
+									pice_period = (pices_time[NUM_PICES_PERIOD - 1] - pices_time[0]) / NUM_PICES_PERIOD;
+									if (pice_period < MIN_PICE_PERIOD)
+									{
+										counter_num_extra_count++;
+										xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Over_Count | Flag_Over_Count_Display);
+
+										for (p=0; p < NUM_PICES_PERIOD; p++)
+										{
+											pices_time[p] = 0;
+										}
 									}
 								}
 							}
+		//#endif // OVER_RATE_ENABLE
 						}
-	//#endif // OVER_RATE_ENABLE
 					}
 				}
 
