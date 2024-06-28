@@ -2050,7 +2050,7 @@ void tft_show_message(uint8_t msg)
 					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\"Protect\"", active_page);
 					break;
 				case 3 : // Dirty
-					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\"Dirty\"", active_page);
+					sprintf((char*)data_tx_buffer, "page%u.t4.txt=\"Clean Window\"", active_page);
 					break;
 
 				case 4 : // Dirty
