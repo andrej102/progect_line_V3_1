@@ -1624,50 +1624,56 @@ void vTask_Scanner(void *pvParameters)
 
 				for (j = 0; j < LINE_DIV_LENGHT; j++)
 				{
-					if((*(p_line + j) & COMP_SR_C1VAL) || (j < 8))
+					if((*(p_line + j) & COMP_SR_C1VAL) || (j < 8)) // если пиксель засвечен
 					{
-						current_line[j] = 0;
-						lastbit = 0;
+						current_line[j] = 0;					// помечаем в текущй линии его нулем (нет тени объекта)
+						lastbit = 0;							// сбрасываем флаг что фрагмент продолжается
 
 						*(p_pixel_parsel + r) &= ~( 1 << k++);
 					}
-					else
+					else										// если пиксель затемнен, то
 					{
 						*(p_pixel_parsel + r) |= ( 1 << k++);
 
-						if(!lastbit)
+						if(!lastbit)							// если фрагмент не длится, то
 						{
-							NumObjectsInCurrentLine++;
-							p_objects_current_line[NumObjectsInCurrentLine-1] = &objects_current_line[NumObjectsInCurrentLine-1];
-							p_objects_current_line[NumObjectsInCurrentLine-1]->area = 0;
+							NumObjectsInCurrentLine++;			// значит встретили новый фрагмент и увеличиваем счетчик фрагментов текущей линии
+							p_objects_current_line[NumObjectsInCurrentLine-1] = &objects_current_line[NumObjectsInCurrentLine-1]; // инициируем очередной указатель на фрагмента (назначаем указать на его свойства)
+							p_objects_current_line[NumObjectsInCurrentLine-1]->area = 0; // и обнуляем площадь фрагмента (через указатель на его свойства)
 						}
 
-						current_line[j] = NumObjectsInCurrentLine;
-						p_objects_current_line[NumObjectsInCurrentLine-1]->area++;
+						current_line[j] = NumObjectsInCurrentLine; // маркируем ячеку пикселя номером фрагмента (номер фрагмента-1 , это и номер указателя (в массиве указателей) на свойства данного фрагмента, значение которого в дальнейшем может изменится (станет указывать на свойства другого фрагмента, для объединения фрагментов))
+						p_objects_current_line[NumObjectsInCurrentLine-1]->area++; // увеличиваем площаль фрагмента на один пиксель
 						lastbit = 1;
 
-						if(last_line[j])
-						{
-							p_objects_last_line[last_line[j]-1]->cont = 1;
+						// проверяем что было в прошлой линии на данном пикселе
 
-							if (!p_objects_last_line[last_line[j]-1]->sl)
+						if(last_line[j])		//если он там тоже был фрагмент, то очевидно продолжается один объект
+						{
+							p_objects_last_line[last_line[j]-1]->cont = 1; // тогда маркируем фрагмент прошлой линии что он продолжается в текущей линии
+
+							if (!p_objects_last_line[last_line[j]-1]->sl) // если площадь текущего фрагмента прошлой линии не была добавлена к площади текущему объекту текущей линии, то
 							{
-								p_objects_last_line[last_line[j]-1]->sl = current_line[j];
-								p_objects_current_line[current_line[j]-1]->area += p_objects_last_line[last_line[j]-1]->area;
+								p_objects_current_line[current_line[j]-1]->area += p_objects_last_line[last_line[j]-1]->area; // поэтому добавляем к площади текущего фрагмента текущей линии площаль от текущего фрагмента прошлой линии
+								p_objects_last_line[last_line[j]-1]->sl = current_line[j]; // и отмечаем номером указателячто площадь данного фрагмена прошлой линии уже добавлена к текущему фрагменту текущей линии
 							}
-							else
+							else // если площадь текущего фрагмента прошлой линии уже была добавлена к текущему фрагменту текущей линии, то
 							{
-								if (p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl - 1] != p_objects_current_line[current_line[j]-1])
+								if (p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl - 1] != p_objects_current_line[current_line[j]-1]) // проверяем, если текущий фрагмент текущей линии не тот же, к которому была добавка площади из текущего фрагмента прошлой линии, то
 								{
+									// получается то данный фрагмент прошлой линии покрывает и текущий фрагмент текущей линии, поэтому
+									// поэтому решаем что это все один фрагмен одного объекта и
+									// прибавляем площадь текущего фрагмента текущей линии к тому фрагменту, к которому была прибовка из данного фрагмента прошлой линии
 									p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl-1]->area += p_objects_current_line[current_line[j]-1]->area;
+									// а указатель текущего фрагмента текущей линии начинает указывать те же свойства фаргмента
 									p_objects_current_line[current_line[j]-1] = p_objects_current_line[p_objects_last_line[last_line[j]-1]->sl - 1];
 								}
 							}
 						}
 					}
 
-					// we analyze the connectivity of the objects of the current line with the objects of the previous line
-					// and arrange the corresponding signs (connectivity and continuation)
+					// для ускорения работы в этом же цикле переносим текущее значение ячейки линии в последню,
+					// т.к. для следующего скана текущая будет последней.
 
 					if(k == 8) {k = 0; r++;}
 
