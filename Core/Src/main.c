@@ -253,16 +253,19 @@ char param_str[32] = {0};
 
 //------------ major tuning parameters of scanner ----------------------
 
-#define PROTECT_SERVICE_ENABLE 1		// protect service enable
-#define CLEAN_TEST_SERVICE_ENABLE 1		// clean test service enable
+#define PROTECT_SERVICE_ENABLE 		// protect service enable
+//#define CLEAN_TEST_SERVICE_ENABLE 		// clean test service enable
 #define OVER_AREA 1500					// global max area
 #define IDLE_STATE_TIMEOUT 1000  		// idle state timeout in seconds
+#define DEFAULT_MIN_AREA 7
 
-float k_1 = 3.0; 						// for small tablets
-float k_2 = 1.7; 						// for big tablets
+float k_0 = 3.1; //for ultra small
+float k_1 = 3.1; 						// for small tablets
+float k_2 = 1.72;						// for big tablets
+uint32_t div_11 = 70; //area separating ultra small and small
 uint32_t div_12 = 200;					// area separating small and big tablets
-uint32_t min_area = 10;					// current smallest area to be taken into account
-uint32_t max_area = 1500;				// current largest area to be taken into account without division
+uint32_t min_area = DEFAULT_MIN_AREA;					// current smallest area to be taken into account
+uint32_t max_area = OVER_AREA;				// current largest area to be taken into account without division
 
 //----------------------------------
 
@@ -449,7 +452,7 @@ int main(void)
   xTaskCreate(vTask_USART_Service,(char*)"USART Service", 1024, NULL, tskIDLE_PRIORITY + 3, &xTaskHandle_USART_Service);
 
     //xTaskCreate(vTask_UART_Line_TX,(char*)"UART Line TX", 512, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_UART_Line_TX);
-  //xTaskCreate(vTask_USB_Line_TX,(char*)"USB Line TX", 1024, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_USB_Line_TX);
+  xTaskCreate(vTask_USB_Line_TX,(char*)"USB Line TX", 1024, NULL, tskIDLE_PRIORITY + 4, &xTaskHandle_USB_Line_TX);
 
   StartScaner();
 
@@ -1538,7 +1541,7 @@ void vTask_Scanner(void *pvParameters)
 
 	uint32_t clear_tester = 0;
 
-	/* Infinite loop */
+
 	for(;;)
 	{
 		xQueueReceive(xQueue_pLines_busy, &p_line, portMAX_DELAY);
@@ -1680,7 +1683,7 @@ void vTask_Scanner(void *pvParameters)
 					last_line[j] = current_line[j];
 				}
 
-				if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Mode_Transparent)
+				if (xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Mode_Blue)
 				{
 					// Transparent mode
 
@@ -1749,15 +1752,16 @@ void vTask_Scanner(void *pvParameters)
 							}
 
 							// check over area
-							if (p_objects_last_line[j]->area > OVER_AREA)
-							{
+
+						//	if (p_objects_last_line[j]->area > OVER_AREA)
+						//	{
 	#ifdef PROTECT_SERVICE_ENABLE
-								StopScaner();
-								xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Protect_State |  Flag_Protect_Event);
+						//		StopScaner();
+						//		xEventGroupSetBits( xEventGroup_StatusFlags, Flag_Protect_State |  Flag_Protect_Event);
 	#endif // PROTECT_SERVICE_ENABLE
-								p_objects_last_line[j]->area = 0;
-								continue;
-							}
+						//		p_objects_last_line[j]->area = 0;
+						//		continue;
+						//	}
 
 							// check under area
 							if (p_objects_last_line[j]->area < min_area)
@@ -1792,13 +1796,13 @@ void vTask_Scanner(void *pvParameters)
 									p_objects_last_line[j]->area = 0;
 								}
 
-								/*if(numObjects)
-								{
-									if (Objects_area[numObjects] == Objects_area[numObjects - 1])
-									{
-										numObjects--;
-									}
-								}*/
+								//if(numObjects)
+								//{
+								//	if (Objects_area[numObjects] == Objects_area[numObjects - 1])
+								//	{
+								//		numObjects--;
+								//	}
+								//}
 
 								numObjects++;
 
@@ -1809,8 +1813,20 @@ void vTask_Scanner(void *pvParameters)
 									midle_area = 0;
 									for (i=0; i < NUM_PICES_FOR_EXECUTE_MIDLE; i++) midle_area += Objects_area[i];
 									midle_area /= NUM_PICES_FOR_EXECUTE_MIDLE;
-									max_area = (midle_area < div_12) ? (midle_area * k_1) : (midle_area * k_2);
-									min_area = (midle_area*15)/100;
+									//max_area = (midle_area < div_12) ? (midle_area * k_1) : (midle_area * k_2);
+									if(midle_area <= div_11)
+									{
+										max_area = midle_area * k_0;
+									}
+									else if(midle_area <= div_12)
+									{
+										max_area = midle_area * k_1;
+									}
+									else
+									{
+										max_area = midle_area * k_2;
+									}
+									min_area = (midle_area*10)/100;
 								}
 
 								if(numObjects > 1000)
@@ -1820,7 +1836,7 @@ void vTask_Scanner(void *pvParameters)
 							}
 
 		//#ifdef OVER_RATE_ENABLE
-							if ((numObjects_temp != numObjects) && (midle_area < div_12) && numObjects > NUM_PICES_FOR_EXECUTE_MIDLE)
+							if ((numObjects_temp != numObjects) && (midle_area <= div_12) && numObjects > NUM_PICES_FOR_EXECUTE_MIDLE)
 							{
 								for (p=1; p < NUM_PICES_PERIOD; p++)
 								{
@@ -1831,7 +1847,7 @@ void vTask_Scanner(void *pvParameters)
 
 								if (numObjects > (NUM_PICES_PERIOD - 1))
 								{
-									pice_period = (pices_time[NUM_PICES_PERIOD - 1] - pices_time[0]) / NUM_PICES_PERIOD;
+									pice_period = (pices_time[NUM_PICES_PERIOD - 1] - pices_time[0]) / (NUM_PICES_PERIOD - 1);
 									if (pice_period < MIN_PICE_PERIOD)
 									{
 										counter_num_extra_count++;
@@ -1863,6 +1879,76 @@ void vTask_Scanner(void *pvParameters)
 				NumObjectsInLastLine = NumObjectsInCurrentLine;
 			}
 		}
+
+		HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
+
+		xQueueSend(xQueue_pLines_empty, &p_line, 0);
+
+		queue_polling_lines_counter++;
+
+		if (p_pixel_parsel != temp_pixel_parsel)
+		{
+			*(uint32_t*)p_pixel_parsel = 0xAAAAAAAA;
+			*(uint32_t*)(p_pixel_parsel + 4) = pixel_parsel_counter;
+
+			xQueueSend(xQueue_pLines_busy_usb, &p_line, 0);
+		}
+
+		pixel_parsel_counter++;
+  }
+
+}
+
+//--- test test ---
+
+void vTask_Scanner_disable(void *pvParameters)
+{
+	uint32_t r = 0, k = 0, j = 0;
+	uint32_t *p_line = NULL;
+
+	for(;;)
+	{
+		xQueueReceive(xQueue_pLines_busy, &p_line, portMAX_DELAY);
+
+		HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
+
+		if (xEventGroupGetBits(xEventGroup_StatusFlags_2) & Flag_2_Debug_Mode)
+		{
+			if(!(xEventGroupGetBits(xEventGroup_StatusFlags) & Flag_Container_Removed))
+			{
+				xEventGroupSetBits(xEventGroup_StatusFlags, Flag_Activity_Detect);
+			}
+		}
+
+		if (xQueueReceive(xQueue_pLines_empty_usb, &p_pixel_parsel, 0) != pdTRUE)
+		{
+			p_pixel_parsel = temp_pixel_parsel;
+		}
+
+		k = 7; r = 8;
+
+		for (j = 0; j < LINE_DIV_LENGHT; j++)
+		{
+			if(*(p_line + j) & COMP_SR_C1VAL)
+			{
+				*(p_pixel_parsel + r) &= ~( 1 << k);
+			}
+			else
+			{
+				*(p_pixel_parsel + r) |= ( 1 << k);
+			}
+
+			if(k == 0)
+			{
+				k = 7;
+				r++;
+			}
+			else
+			{
+				k--;
+			}
+		}
+
 
 		HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
 
@@ -2401,7 +2487,8 @@ void Clear_Counter (void)
  		counter_num_extra_count = 0;
 		numObjects = 0;
 		num_show_object_area = 0;
-		max_area = 3000;//max_area = 0;
+		max_area = OVER_AREA;//max_area = 0;
+		min_area = DEFAULT_MIN_AREA;
 		midle_area = 0;
 
 		for (p=0; p < NUM_PICES_PERIOD; p++)
@@ -2507,7 +2594,7 @@ void ComparatorsTuning(void)
 void SystemInterruptsTuning(void)
 {
     NVIC_EnableIRQ(TIM3_IRQn);
-    NVIC_SetPriority(TIM3_IRQn, 10);
+    NVIC_SetPriority(TIM3_IRQn, 0);
 
     NVIC_EnableIRQ(USART1_IRQn);
     NVIC_SetPriority(USART1_IRQn, 11);

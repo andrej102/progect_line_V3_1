@@ -136,8 +136,8 @@ void Error_Handler(void);
 
 //-----------------------------------------
 
-#define TRANSPARENT_OBJECT_OVERTIME 80
-#define TRANSPARENT_OBJECT_CURRENT_LINE_OVERTIME 20
+#define TRANSPARENT_OBJECT_OVERTIME 50
+#define TRANSPARENT_OBJECT_CURRENT_LINE_OVERTIME 10
 
 /* USER CODE END Private defines */
 
